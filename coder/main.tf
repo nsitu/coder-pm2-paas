@@ -56,18 +56,16 @@ data "coder_parameter" "git_repo" {
   mutable     = true
   default     = "https://bender.sheridanc.on.ca/sikkemha/nodejs.git" 
 }
-
 data "coder_parameter" "allowed_repos" {
   name         = "ALLOWED_REPOS"
-  display_name = "Allowed GitHub repos (JSON array, owner/repo)"
-  type         = "string"
+  display_name = "Allowed GitHub repos (owner/repo)"
+  type         = "list(string)"
   mutable      = true
-  default      = "[\"owner/repo-a\",\"owner/repo-b\"]"
+  default      = jsonencode([
+    "https://github.com/nsitu/express-hello-world"
+  ])
 }
  
-
-
-
   
 
 provider "kubernetes" {

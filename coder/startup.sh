@@ -21,6 +21,8 @@ echo "==============================================================="
 
 # --- Persistent base path for everything ---
 BASE="/home/coder/srv"
+
+
 sudo mkdir -p "$BASE" && sudo chown -R coder:coder "$BASE"
 sudo mkdir -p "$BASE"/{apps,deploy,docs,nginx/conf.d,pm2,webhook}
 
@@ -35,9 +37,36 @@ if [ -n "${GIT_SSH_PRIVATE_KEY:-}" ]; then
   printf '%s\n' "$GIT_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
   chmod 600 ~/.ssh/id_ed25519
 fi
-REPO_HOST="$(echo "${GIT_REPO:-}" | sed -E 's#(git@|https?://)([^/:]+).*#\2#')"
-[ -n "$REPO_HOST" ] && ssh-keyscan "$REPO_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-chmod 644 ~/.ssh/known_hosts 2>/dev/null || true
+
+# Seed known_hosts from ALLOWED_REPOS (JSON array or CSV)
+if [ -n "${ALLOWED_REPOS:-}" ]; then
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh
+
+  # Remove wrapping brackets/quotes if JSON
+  CLEANED=$(echo "$ALLOWED_REPOS" | sed 's/[][]//g' | tr -d '"' | tr ',' '\n')
+
+  echo "$CLEANED" | while read -r entry; do
+    entry=$(echo "$entry" | xargs) # trim
+    [ -z "$entry" ] && continue
+
+    # Normalize forms: git@host:owner/repo.git, https://host/owner/repo, owner/repo
+    if [[ "$entry" =~ ^git@([^:]+): ]]; then
+      host="${BASH_REMATCH[1]}"
+    elif [[ "$entry" =~ ^https?://([^/]+)/ ]]; then
+      host="${BASH_REMATCH[1]}"
+    elif [[ "$entry" =~ ^[^/]+/[^/]+$ ]]; then
+      host="github.com"
+    else
+      continue
+    fi
+
+    host=$(echo "$host" | tr '[:upper:]' '[:lower:]')
+    echo "Seeding SSH known_hosts for $host"
+    ssh-keyscan "$host" >> ~/.ssh/known_hosts 2>/dev/null || true
+  done
+
+  chmod 644 ~/.ssh/known_hosts 2>/dev/null || true
+fi
 
 # --- Nginx up ---
 nginx -t && (nginx -s reload || nginx) || { echo "Nginx config error"; exit 1; }
