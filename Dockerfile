@@ -3,7 +3,7 @@ FROM ubuntu:noble
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install the Docker apt repository
+# Install packages
 RUN apt-get update && \
     apt-get upgrade --yes --no-install-recommends --no-install-suggests && \
     apt-get install --yes --no-install-recommends --no-install-suggests \
@@ -20,8 +20,8 @@ RUN apt-get update && \
     python3-pip \
     software-properties-common \
     sudo \
-    systemd \
-    systemd-sysv \
+    # systemd \
+    # systemd-sysv \
     unzip \
     zip \
     vim \
@@ -30,12 +30,18 @@ RUN apt-get update && \
     dnsutils \
     tzdata \
     rsync \ 
-    nginx && \
-    
-# Install latest Git using their official PPA
+    openssh-client \
+    lsof \
+    util-linux \
+    nginx && \ 
+    # Install latest Git using their official PPA
     add-apt-repository ppa:git-core/ppa && \
     apt-get install --yes git \
     && rm -rf /var/lib/apt/lists/*
+
+# Pre-seed GitHub known_hosts to avoid first-clone prompts (optional):
+RUN mkdir -p /home/coder/.ssh && ssh-keyscan github.com >> /home/coder/.ssh/known_hosts && chown -R coder:coder /home/coder/.ssh
+
 
 # Install whichever Node version is LTS 
 RUN curl -sL https://deb.nodesource.com/setup_lts.x | bash -
@@ -63,11 +69,15 @@ ENV LC_ALL=en_US.UTF-8
 RUN userdel -r ubuntu && \
     useradd coder \
     --create-home \
-    --shell=/bin/bash \
-    --groups=docker \
+    --shell=/bin/bash \ 
     --uid=1000 \
     --user-group && \
     echo "coder ALL=(ALL) NOPASSWD:ALL" >>/etc/sudoers.d/nopasswd
+
+# Copy system files to seed the container
+COPY --chown=coder:coder srv/ /opt/bootstrap/srv/
+
+
 
 USER coder
 RUN pipx ensurepath # adds user's bin directory to PATH
