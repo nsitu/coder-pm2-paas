@@ -1,11 +1,5 @@
 set -e
-
-# --- Basics / context ---
-echo "Public URL: ${PUBLIC_URL}"
-echo "Editor URL: ${EDITOR_URL}"
-echo "Settings URL: ${SETTINGS_URL}"
-echo "PORT is: ${PORT}"
-
+ 
 # Shell cosmetics
 echo 'export PS1="\[\033[01;34m\]\w\[\033[00m\] $ "' >> ~/.bashrc
 
@@ -21,15 +15,22 @@ echo "==============================================================="
 
 # --- Persistent base path for everything ---
 BASE="/home/coder/srv"
+NGINX_CONF="$BASE/nginx/nginx.conf"
 
+# Create base directories if they don't exist
+sudo mkdir -p "$BASE" "$BASE"/{apps,deploy,docs,nginx/conf.d,pm2,webhook}
+sudo mkdir -p "$BASE"/nginx/tmp/{client,proxy,fastcgi,uwsgi,scgi}
+sudo chown -R coder:coder "$BASE"
 
-sudo mkdir -p "$BASE" && sudo chown -R coder:coder "$BASE"
-sudo mkdir -p "$BASE"/{apps,deploy,docs,nginx/conf.d,pm2,webhook}
 
 # Seed from image once
 if [ ! -f "$BASE/nginx/nginx.conf" ] && [ -d /opt/bootstrap/srv ]; then
   cp -r /opt/bootstrap/srv/* "$BASE"/
 fi
+
+# --- Install Express for webhook ---
+cd "$BASE/webhook"
+npm install --omit=dev
 
 # --- SSH setup for git@ clones (optional) ---
 if [ -n "${GIT_SSH_PRIVATE_KEY:-}" ]; then
@@ -69,7 +70,9 @@ if [ -n "${ALLOWED_REPOS:-}" ]; then
 fi
 
 # --- Nginx up ---
-nginx -t && (nginx -s reload || nginx) || { echo "Nginx config error"; exit 1; }
+nginx -t -c "$NGINX_CONF" \
+  && (nginx -s reload -c "$NGINX_CONF" || nginx -c "$NGINX_CONF") \
+  || { echo "Nginx config error"; exit 1; }
 
 # --- PM2 up & webhook ---
 export PM2_HOME="${PM2_HOME:-$BASE/.pm2}"
