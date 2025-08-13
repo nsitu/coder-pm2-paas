@@ -1,28 +1,38 @@
-# /home/coder/srv/deploy/deploy.sh
 #!/usr/bin/env bash
+# /home/coder/srv/deploy/deploy.sh
 set -euo pipefail
 
 REPO_NAME="${1:?repo name required}"
 GIT_URL="${2:?git url required}"
 BRANCH="${3:-main}"
-BASE_PATH="/${REPO_NAME}"
+
 BASE="/home/coder/srv"
 APPS_DIR="$BASE/apps"
 PORTS_FILE="$BASE/deploy/ports.map"
+
 NGINX_CONF_DIR="$BASE/nginx/conf.d"
+NGINX_MAIN="$BASE/nginx/nginx.conf"
+NGINX_PID_FILE="$BASE/nginx/nginx.pid"
+
+PM2_DIR="$BASE/.pm2"
 ECOSYSTEM="$BASE/pm2/ecosystem.config.js"
+ECOSYSTEM_HELPER="$BASE/pm2/update-ecosystem.js"
 
-mkdir -p "$APPS_DIR" "$NGINX_CONF_DIR" "$BASE/docs"
-touch "$PORTS_FILE" "$ECOSYSTEM"
+LOG_DIR="$BASE/logs"
+NGINX_DEPLOY_LOG="$LOG_DIR/nginx-deploy.log"
+PM2_DEPLOY_LOG="$LOG_DIR/pm2-deploy.log"
 
+mkdir -p "$APPS_DIR" "$NGINX_CONF_DIR" "$BASE/docs" "$LOG_DIR" "$PM2_DIR"
+: > "$PORTS_FILE"   # ensure file exists (no-op if already exists)
+touch "$ECOSYSTEM"  # ensure ecosystem exists (helper will populate)
 APP_DIR="${APPS_DIR}/${REPO_NAME}"
 
-# allocate a stable port per app
+# ---------- stable port per app ----------
 get_port () {
   if grep -q "^${REPO_NAME}:" "$PORTS_FILE"; then
     awk -F: -v app="$REPO_NAME" '$1==app{print $2}' "$PORTS_FILE"
   else
-    PORT=3001
+    local PORT=3001
     while lsof -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || grep -q ":$PORT$" "$PORTS_FILE"; do
       PORT=$((PORT+1))
     done
@@ -31,8 +41,9 @@ get_port () {
   fi
 }
 PORT="$(get_port)"
+BASE_PATH="/${REPO_NAME}"
 
-# checkout/update
+# ---------- checkout/update ----------
 if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" fetch origin "$BRANCH" --depth=1
   git -C "$APP_DIR" checkout "$BRANCH"
@@ -41,16 +52,20 @@ else
   git clone --branch "$BRANCH" --depth=1 "$GIT_URL" "$APP_DIR"
 fi
 
-# install & build
+# ---------- install & optional build ----------
 if [ -f "$APP_DIR/package.json" ]; then
   cd "$APP_DIR"
-  npm ci --omit=dev || npm install --omit=dev
+  if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+    npm ci --omit=dev || npm ci || npm install --omit=dev
+  else
+    npm install --omit=dev
+  fi
   if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
     npm run build
   fi
 fi
 
-# nginx location
+# ---------- write nginx location ----------
 cat > "${NGINX_CONF_DIR}/${REPO_NAME}.conf" <<EOF
 location ^~ ${BASE_PATH}/ {
   proxy_http_version 1.1;
@@ -63,33 +78,34 @@ location ^~ ${BASE_PATH}/ {
 }
 EOF
 
-# ensure pm2 app entry exists/updated (pass path via env explicitly)
-NODE_ECOSYSTEM="$ECOSYSTEM" node - <<'EOF'
-const fs = require('fs');
-const path = process.env.NODE_ECOSYSTEM || '/home/coder/srv/pm2/ecosystem.config.js';
-let mod = { apps: [] };
-if (fs.existsSync(path)) { mod = require(path); }
-mod.apps = (mod.apps || []).filter(a => a.name !== "__REPO__");
-mod.apps.push({
-  name: "__REPO__",
-  script: "npm",
-  args: "start",
-  cwd: "__CWD__",
-  env: { PORT: "__PORT__", BASE_PATH: "/__REPO__" },
-  max_memory_restart: "250M",
-  instances: 1,
-  exec_mode: "fork",
-  restart_delay: 2000
-});
-fs.writeFileSync(path, "module.exports=" + JSON.stringify(mod, null, 2));
-EOF
-# replace placeholders
-sed -i "s#__REPO__#${REPO_NAME}#g;s#__CWD__#${APP_DIR}#g;s#__PORT__#${PORT}#g" "$ECOSYSTEM"
+# ---------- update PM2 ecosystem  ----------
+# Requires $ECOSYSTEM_HELPER to exist (srv/pm2/update-ecosystem.js).
+NODE_ECOSYSTEM="$ECOSYSTEM" \
+REPO_NAME="$REPO_NAME" \
+APP_DIR="$APP_DIR" \
+PORT="$PORT" \
+node "$ECOSYSTEM_HELPER"
 
-# reload services
-nginx -t
-nginx -s reload || nginx -s reopen
+# ---------- reload nginx using workspace config (idempotent) ----------
+if nginx -t -c "$NGINX_MAIN" >>"$NGINX_DEPLOY_LOG" 2>&1; then
+  if pgrep -x nginx >/dev/null 2>&1; then
+    nginx -s reload >>"$NGINX_DEPLOY_LOG" 2>&1 || {
+      echo "nginx reload failed; attempting reopen" >>"$NGINX_DEPLOY_LOG"
+      nginx -s reopen >>"$NGINX_DEPLOY_LOG" 2>&1 || true
+    }
+  else
+    rm -f "$NGINX_PID_FILE"
+    nginx -c "$NGINX_MAIN" >>"$NGINX_DEPLOY_LOG" 2>&1
+  fi
+else
+  echo "Nginx config test failed. See $NGINX_DEPLOY_LOG" >&2
+  exit 1
+fi
 
-pm2 start "$ECOSYSTEM"
-pm2 reload "${REPO_NAME}" || true
-pm2 save
+# ---------- pm2 start/reload app ----------
+export PM2_HOME="${PM2_HOME:-$PM2_DIR}"
+pm2 startOrReload "$ECOSYSTEM" --only "$REPO_NAME" >>"$PM2_DEPLOY_LOG" 2>&1 \
+  || pm2 start "$ECOSYSTEM" --only "$REPO_NAME" >>"$PM2_DEPLOY_LOG" 2>&1
+pm2 save >>"$PM2_DEPLOY_LOG" 2>&1 || true
+
+echo "Deployed ${REPO_NAME} on port ${PORT} at base path ${BASE_PATH}"
