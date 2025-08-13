@@ -53,6 +53,7 @@ srv/
   pm2/
     ecosystem.config.js
   webhook/
+    package.json
     server.js
 Dockerfile
 README.md
@@ -60,6 +61,167 @@ README.md
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="srv/deploy/deploy.sh">
+# /home/coder/srv/deploy/deploy.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_NAME="${1:?repo name required}"
+GIT_URL="${2:?git url required}"
+BRANCH="${3:-main}"
+BASE_PATH="/${REPO_NAME}"
+BASE="/home/coder/srv"
+APPS_DIR="$BASE/apps"
+PORTS_FILE="$BASE/deploy/ports.map"
+NGINX_CONF_DIR="$BASE/nginx/conf.d"
+ECOSYSTEM="$BASE/pm2/ecosystem.config.js"
+
+mkdir -p "$APPS_DIR" "$NGINX_CONF_DIR" "$BASE/docs"
+touch "$PORTS_FILE" "$ECOSYSTEM"
+
+APP_DIR="${APPS_DIR}/${REPO_NAME}"
+
+# allocate a stable port per app
+get_port () {
+  if grep -q "^${REPO_NAME}:" "$PORTS_FILE"; then
+    awk -F: -v app="$REPO_NAME" '$1==app{print $2}' "$PORTS_FILE"
+  else
+    PORT=3001
+    while lsof -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || grep -q ":$PORT$" "$PORTS_FILE"; do
+      PORT=$((PORT+1))
+    done
+    echo "${REPO_NAME}:$PORT" >> "$PORTS_FILE"
+    echo "$PORT"
+  fi
+}
+PORT="$(get_port)"
+
+# checkout/update
+if [ -d "$APP_DIR/.git" ]; then
+  git -C "$APP_DIR" fetch origin "$BRANCH" --depth=1
+  git -C "$APP_DIR" checkout "$BRANCH"
+  git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+else
+  git clone --branch "$BRANCH" --depth=1 "$GIT_URL" "$APP_DIR"
+fi
+
+# install & build
+if [ -f "$APP_DIR/package.json" ]; then
+  cd "$APP_DIR"
+  npm ci --omit=dev || npm install --omit=dev
+  if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
+    npm run build
+  fi
+fi
+
+# nginx location
+cat > "${NGINX_CONF_DIR}/${REPO_NAME}.conf" <<EOF
+location ^~ ${BASE_PATH}/ {
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade \$http_upgrade;
+  proxy_set_header Connection \$connection_upgrade;
+  proxy_set_header X-Forwarded-Prefix ${BASE_PATH};
+  proxy_set_header X-Forwarded-Host \$host;
+  rewrite ^${BASE_PATH}/(.*)\$ /\$1 break;
+  proxy_pass http://127.0.0.1:${PORT};
+}
+EOF
+
+# ensure pm2 app entry exists/updated (pass path via env explicitly)
+NODE_ECOSYSTEM="$ECOSYSTEM" node - <<'EOF'
+const fs = require('fs');
+const path = process.env.NODE_ECOSYSTEM || '/home/coder/srv/pm2/ecosystem.config.js';
+let mod = { apps: [] };
+if (fs.existsSync(path)) { mod = require(path); }
+mod.apps = (mod.apps || []).filter(a => a.name !== "__REPO__");
+mod.apps.push({
+  name: "__REPO__",
+  script: "npm",
+  args: "start",
+  cwd: "__CWD__",
+  env: { PORT: "__PORT__", BASE_PATH: "/__REPO__" },
+  max_memory_restart: "250M",
+  instances: 1,
+  exec_mode: "fork",
+  restart_delay: 2000
+});
+fs.writeFileSync(path, "module.exports=" + JSON.stringify(mod, null, 2));
+EOF
+# replace placeholders
+sed -i "s#__REPO__#${REPO_NAME}#g;s#__CWD__#${APP_DIR}#g;s#__PORT__#${PORT}#g" "$ECOSYSTEM"
+
+# reload services
+nginx -t
+nginx -s reload || nginx -s reopen
+
+pm2 start "$ECOSYSTEM"
+pm2 reload "${REPO_NAME}" || true
+pm2 save
+</file>
+
+<file path="srv/docs/index.html">
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>PaaS Server for NodeJS Apps</title>
+</head>
+
+<body>
+    <h1>PaaS Server for NodeJS Apps</h1>
+    <p>Powered by PM2 and NGINX</p>
+</body>
+
+</html>
+</file>
+
+<file path="srv/pm2/ecosystem.config.js">
+// /srv/pm2/ecosystem.config.js
+module.exports = {
+    apps: [
+        {
+            name: "webhook",
+            script: "node",
+            args: "/home/coder/srv/webhook/server.js",
+            env: {
+                WEBHOOK_PORT: "4600"
+            }
+        }
+
+        // Entries appended by deploy script, e.g.:
+        // {
+        //   name: "repo-name",
+        //   script: "npm",
+        //   args: "start",
+        //   cwd: "/srv/apps/repo-name",
+        //   env: {
+        //     PORT: 3001,
+        //     BASE_PATH: "/repo-name"
+        //   },
+        //   max_memory_restart: "250M",
+        //   instances: 1,
+        //   exec_mode: "fork",
+        //   restart_delay: 2000
+        // }
+    ]
+}
+</file>
+
+<file path="srv/webhook/package.json">
+{
+    "name": "webhook",
+    "private": true,
+    "dependencies": {
+        "express": "^4.21.2"
+    }
+}
+</file>
 
 <file path="coder/main.tf">
 terraform {
@@ -120,18 +282,16 @@ data "coder_parameter" "git_repo" {
   mutable     = true
   default     = "https://bender.sheridanc.on.ca/sikkemha/nodejs.git" 
 }
-
 data "coder_parameter" "allowed_repos" {
   name         = "ALLOWED_REPOS"
-  display_name = "Allowed GitHub repos (JSON array, owner/repo)"
-  type         = "string"
+  display_name = "Allowed GitHub repos (owner/repo)"
+  type         = "list(string)"
   mutable      = true
-  default      = "[\"owner/repo-a\",\"owner/repo-b\"]"
+  default      = jsonencode([
+    "https://github.com/nsitu/express-hello-world"
+  ])
 }
  
-
-
-
   
 
 provider "kubernetes" {
@@ -151,7 +311,7 @@ resource "coder_agent" "main" {
   startup_script         = replace(file("${path.module}/startup.sh"), "\r", "")
  
   # TEST: this may help to tell VS Code Desktop which folder to open
-  dir  = "/home/coder/${data.coder_workspace_owner.me.name}"
+  dir  = "/home/coder"
 
   display_apps {
     vscode          = false
@@ -182,11 +342,7 @@ resource "coder_agent" "main" {
   }
  
  
-}
-# It is vital that the workspace folder in the url 
-# Matches the folder that we are actually persisting. 
-# /home/coder/${data.coder_workspace_owner.me.name}
-
+} 
 # NOTE coder modules are frequently updated. 
 # note that version  = "1.0.30" refers to the entire module repo rather than the specific module
 # you can see a complete history of module changes here:/
@@ -201,7 +357,7 @@ module "vscode-web" {
   source         = "registry.coder.com/modules/vscode-web/coder"
   version        = "1.0.30"
   agent_id       = coder_agent.main.id
-  folder   = "/home/coder/${data.coder_workspace_owner.me.name}"
+  folder   = "/home/coder"
   # extensions     = ["github.copilot"]
   settings = {
       "workbench.colorTheme": "Default Dark Modern",
@@ -409,303 +565,31 @@ resource "kubernetes_deployment" "main" {
 }
 </file>
 
-<file path="coder/startup.sh">
-set -e  
-# set -e instructs the shell to immediately exit 
-# if any command within the script returns a non-zero status (which genera# --- Opt# ---pm2 save || true
-
-
-# Standardize base path for all services
-BASE="/home/coder/srv"
-
-
-# Deploy once if no apps yet and GIT_REPO provided (useful for a demo or "App #1" param)
-if [ ! -s "$BASE/deploy/ports.map" ] && [ -n "${GIT_REPO:-}" ]; then
-  # Derive repo name from URL (handles ssh/https common cases)
-  REPO_NAME="$(basename -s .git "$(echo "$GIT_REPO" | sed 's#.*[:/]\([^/]*\)\.git$#\1#')")"
-  "$BASE/deploy/deploy.sh" "$REPO_NAME" "$GIT_REPO" "${DEFAULT_BRANCH:-main}" || echo "initial deploy failed"
-  pm2 save || true
-first-boot auto-deploy ---
-# Deploy once if no apps yet and GIT_REPO provided (useful for a demo or "App #1" param)
-if [ ! -s "$BASE/deploy/ports.map" ] && [ -n "${GIT_REPO:-}" ]; then
-  # Derive repo name from URL (handles ssh/https common cases)
-  REPO_NAME="$(basename -s .git "$(echo "$GIT_REPO" | sed 's#.*[:/]\([^/]*\)\.git$#\1#')")"
-  "$BASE/deploy/deploy.sh" "$REPO_NAME" "$GIT_REPO" "${DEFAULT_BRANCH:-main}" || echo "initial deploy failed"
-  pm2 save || true
-ficates an error)
-
-
-# Create the project directory if it doesn't exist
-# assign coder as the owner of the project directory
-# Navigate to the workspace directory 
-mkdir -p ~/${USERNAME}
-sudo chown coder:coder ~/${USERNAME}
-cd ~/${USERNAME}
- 
-# Check the value of CODE_TEMPLATE
-# Set the GIT_REPO to the default value if CODE_TEMPLATE is "default"
-# Leave GIT_REPO as it is if CODE_TEMPLATE is anything else. (e.g "custom" or blank.) 
-if [ "$CODE_TEMPLATE" = "default" ]; then 
-    GIT_REPO="https://bender.sheridanc.on.ca/sikkemha/html-css-js"  
-fi
-  
-echo "Public URL: ${PUBLIC_URL}" 
-echo "Editor URL: ${EDITOR_URL}" 
-echo "Settings URL: ${SETTINGS_URL}" 
-echo "Code Template: ${CODE_TEMPLATE}"
-echo "Boilerplate Git Repository: '${GIT_REPO}'"
-echo "PORT is: ${PORT}" 
-echo "Current Directory is: $PWD" 
- 
-
-# This is where we should call the deploy script.  
- 
-echo Customizing the shell appearance for simplicity
-echo 'export PS1="\\[\\033[01;34m\\]\\w\\[\\033[00m\\] $ "' >> ~/.bashrc 
-
-# Let's Get the Public IP Address of the Workspace
-# NOTE: I found that opendns, google, etc. are not reliable in the workspace. 
-# The following should work but does not.
-# echo "Public IP Address: $(dig +short myip.opendns.com @resolver1.opendns.com)"
-# Perhaps this is due to DNS or Network settings. 
-# Instead we can use a variety of public IP services, here's a list,
-# We will pick one randomly and if it doesn't work we will pick a different one.
-
-services=(
-  "https://ipinfo.io/ip"
-  "https://api.ipify.org"
-  "https://checkip.amazonaws.com"
-  "https://ifconfig.me/ip"
-  "https://ipapi.co/ip"
-  "https://icanhazip.com/"
-  "https://ident.me"
-  "https://myexternalip.com/raw"
-  "https://whatismyip.akamai.com"
-)
-
-# Function to get public IP
-get_public_ip() {
-  for ((i=0; i<${#services[@]}; i++)); do
-    # Randomly select a service
-    service=${services[RANDOM % ${#services[@]}]}
-    
-    # Try to fetch public IP
-    ip=$(curl -s --max-time 3 "$service")
-    
-    # If the result is non-empty, return it
-    if [[ -n "$ip" ]]; then
-      echo "Public IP Address: $ip"
-      echo "(Fetched via $service)"
-      return 0
-    fi
-  done
-  echo "Unable to fetch Public IP Address."
-  return 1
-}
- 
-
-echo =========
-echo "System Information Snapshot $(date '+%a %b %d %Y, %I:%M%p')"
-echo ---------
-get_public_ip
-echo ---------
-coder stat
-echo ---------
-echo "TIP: For an updated snapshot, try these commands on the terminal:"
-echo "coder stat                # Get the current resource use"
-echo "curl ipinfo.io/ip         # Get your current public IP Address"
-echo "top                       # See what processes are running"
-echo =========
-
-
-# --- ensure /srv layout exists and files are in place ---
-sudo mkdir -p "$BASE" && sudo chown -R coder:coder "$BASE"
-sudo mkdir -p "$BASE"/{apps,deploy,docs,nginx/conf.d,pm2,webhook}
-
-# If you baked these into the image under /srv/, great. If you copied to /opt/bootstrap,
-# move them into place on first boot only:
-if [ ! -f "$BASE/nginx/nginx.conf" ] && [ -d /opt/bootstrap/srv ]; then
-  cp -r /opt/bootstrap/srv/* "$BASE"/
-fi
-
-# --- SSH key for webhook git clone (optional; only if you pass it as a secret) ---
-# Expect GIT_SSH_PRIVATE_KEY and GIT_KNOWN_HOSTS from Coder secrets/params
-if [ -n "${GIT_SSH_PRIVATE_KEY:-}" ]; then
-  mkdir -p ~/.ssh && chmod 700 ~/.ssh
-  printf '%s\n' "$GIT_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-  chmod 600 ~/.ssh/id_ed25519
-fi
-# Pre-seed known_hosts for GitHub; or use your own forge
-if [ -z "${GIT_KNOWN_HOSTS:-}" ]; then
-  # Dynamically detect repo host from GIT_REPO and add to known_hosts
-  REPO_HOST="$(echo "${GIT_REPO:-}" | sed -E 's#(git@|https?://)([^/:]+).*#\2#')"
-  [ -n "$REPO_HOST" ] && ssh-keyscan "$REPO_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-else
-  printf '%s\n' "$GIT_KNOWN_HOSTS" >> ~/.ssh/known_hosts
-fi
-chmod 644 ~/.ssh/known_hosts || true
-
-# --- Nginx up (daemonized) ---
-# Test and start/reload safely
-nginx -t && (nginx -s reload || nginx) || { echo "Nginx config error"; exit 1; }
-
-# --- PM2 bootstrap ---
-export PM2_HOME="${PM2_HOME:-$BASE/.pm2}"
-pm2 ping >/dev/null 2>&1 || true
-# If we have a previous dump, restore all apps (including webhook)
-if [ -f "$PM2_HOME/dump.pm2" ]; then
-  pm2 resurrect || true
-fi
-
-# Ensure the webhook process is running (safe to re-run)
-if ! pm2 describe webhook >/dev/null 2>&1; then
-  pm2 start "$BASE/pm2/ecosystem.config.js" --only webhook || pm2 start "$BASE/pm2/ecosystem.config.js"
-fi
-pm2 save || true
-
-# --- Optional first-boot auto-deploy ---
-# Deploy once if no apps yet and GIT_REPO provided (useful for a demo or "App #1" param)
-if [ ! -s "$BASE/deploy/ports.map" ] && [ -n "${GIT_REPO:-}" ]; then
-  # Derive repo name from URL (handles ssh/https common cases)
-  REPO_NAME="$(basename -s .git "$(echo "$GIT_REPO" | sed 's#.*[:/]\([^/]*\)\.git$#\1#')")"
-  "$BASE/deploy/deploy.sh" "$REPO_NAME" "$GIT_REPO" "${DEFAULT_BRANCH:-main}" || echo "initial deploy failed"
-  pm2 save || true
-fi
-
-echo "Startup complete. Public URL: ${PUBLIC_URL}"rst-boot auto-deploy ---
-</file>
-
-<file path="srv/deploy/deploy.sh">
-# /home/coder/srv/deploy/deploy.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-REPO_NAME="${1:?repo name required}"
-GIT_URL="${2:?git url required}"
-BRANCH="${3:-main}"
-BASE_PATH="/${REPO_NAME}"
-BASE="/home/coder/srv"
-APPS_DIR="$BASE/apps"
-PORTS_FILE="$BASE/deploy/ports.map"
-NGINX_CONF_DIR="$BASE/nginx/conf.d"
-ECOSYSTEM="$BASE/pm2/ecosystem.config.js"
-
-mkdir -p "$APPS_DIR" "$NGINX_CONF_DIR" "$BASE/docs"
-touch "$PORTS_FILE" "$ECOSYSTEM"
-
-APP_DIR="${APPS_DIR}/${REPO_NAME}"
-
-# allocate a stable port per app
-function get_port () {
-  if grep -q "^${REPO_NAME}:" "$PORTS_FILE"; then
-    awk -F: -v app="$REPO_NAME" '$1==app{print $2}' "$PORTS_FILE"
-  else
-    # find next free port starting at 3001
-    PORT=3001
-    while lsof -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || grep -q ":$PORT$" "$PORTS_FILE"; do
-      PORT=$((PORT+1))
-    done
-    echo "${REPO_NAME}:$PORT" >> "$PORTS_FILE"
-    echo "$PORT"
-  fi
-}
-
-PORT="$(get_port)"
-
-# checkout/update
-if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" fetch origin "$BRANCH" --depth=1
-  git -C "$APP_DIR" checkout "$BRANCH"
-  git -C "$APP_DIR" reset --hard "origin/$BRANCH"
-else
-  git clone --branch "$BRANCH" --depth=1 "$GIT_URL" "$APP_DIR"
-fi
-
-# install & build (skip build if not present)
-if [ -f "$APP_DIR/package.json" ]; then
-  cd "$APP_DIR"
-  npm ci --omit=dev || npm install --omit=dev
-  if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
-    npm run build
-  fi
-fi
-
-# nginx location for this app
-cat > "${NGINX_CONF_DIR}/${REPO_NAME}.conf" <<EOF
-location ^~ ${BASE_PATH}/ {
-  proxy_http_version 1.1;
-  proxy_set_header Upgrade \$http_upgrade;
-  proxy_set_header Connection \$connection_upgrade;
-  proxy_set_header X-Forwarded-Prefix ${BASE_PATH};
-  proxy_set_header X-Forwarded-Host \$host;
-  rewrite ^${BASE_PATH}/(.*)\$ /\$1 break;
-  proxy_pass http://127.0.0.1:${PORT};
-}
-EOF
-
-# ensure pm2 app entry exists/updated
-node - <<'EOF'
-const fs=require('fs');
-const path=process.env.ECOSYSTEM;
-let mod={apps:[]};
-if (fs.existsSync(path)) { mod=require(path); }
-mod.apps = mod.apps.filter(a=>a.name!=="__REPO__");
-mod.apps.push({
-  name:"__REPO__",
-  script:"npm",
-  args:"start",
-  cwd:"__CWD__",
-  env:{ PORT:"__PORT__", BASE_PATH:"/__REPO__" },
-  max_memory_restart:"250M",
-  instances:1,
-  exec_mode:"fork",
-  restart_delay:2000
-});
-fs.writeFileSync(path, "module.exports="+JSON.stringify(mod,null,2));
-EOF
-# replace placeholders
-sed -i "s#__REPO__#${REPO_NAME}#g;s#__CWD__#${APP_DIR}#g;s#__PORT__#${PORT}#g" "$ECOSYSTEM"
-
-# reload services
-nginx -t
-nginx -s reload || nginx -s reopen
-
-pm2 start "$ECOSYSTEM"
-pm2 reload "${REPO_NAME}" || true
-pm2 save
-</file>
-
-<file path="srv/docs/index.html">
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-    <title>PaaS Server for NodeJS Apps</title>
-</head>
-
-<body>
-    <h1>PaaS Server for NodeJS Apps</h1>
-    <p>Powered by PM2 and NGINX</p>
-</body>
-
-</html>
-</file>
-
 <file path="srv/nginx/nginx.conf">
 # /home/coder/srv/nginx/nginx.conf
 worker_processes 1;
+
+# place the pid file somewhere you can write
+pid /home/coder/srv/nginx/nginx.pid;
 
 events { worker_connections 1024; }
 
 http {
   sendfile on;
-  include       mime.types;
+  include       /etc/nginx/mime.types; # Use system-wide mime.types
+
   default_type  application/octet-stream;
+
+  # ▶ logs you can write
+  access_log /home/coder/srv/nginx/access.log;
+  error_log  /home/coder/srv/nginx/error.log;
+
+  # ▶ temp paths you can write
+  client_body_temp_path /home/coder/srv/nginx/tmp/client 1 2;
+  proxy_temp_path       /home/coder/srv/nginx/tmp/proxy;
+  fastcgi_temp_path     /home/coder/srv/nginx/tmp/fastcgi;
+  uwsgi_temp_path       /home/coder/srv/nginx/tmp/uwsgi;
+  scgi_temp_path        /home/coder/srv/nginx/tmp/scgi;
 
   # WS support
   map $http_upgrade $connection_upgrade { default upgrade; '' close; }
@@ -729,8 +613,7 @@ http {
       proxy_pass http://127.0.0.1:4600/webhook/github;
       proxy_http_version 1.1;
       # optional hardening:
-      # if ($request_method != POST) { return 405; }
-      # limit_req zone=gh burst=10 nodelay;
+      if ($request_method != POST) { return 405; } 
     }
 
 
@@ -743,75 +626,98 @@ http {
 }
 </file>
 
-<file path="srv/pm2/ecosystem.config.js">
-// /srv/pm2/ecosystem.config.js
-module.exports = {
-    apps: [
-        {
-            name: "webhook",
-            script: "node",
-            args: "/home/coder/srv/webhook/server.js",
-            env: {
-                WEBHOOK_PORT: "4600"
-            }
-        }
-
-        // Entries appended by deploy script, e.g.:
-        // {
-        //   name: "repo-name",
-        //   script: "npm",
-        //   args: "start",
-        //   cwd: "/srv/apps/repo-name",
-        //   env: {
-        //     PORT: 3001,
-        //     BASE_PATH: "/repo-name"
-        //   },
-        //   max_memory_restart: "250M",
-        //   instances: 1,
-        //   exec_mode: "fork",
-        //   restart_delay: 2000
-        // }
-    ]
-}
-</file>
-
 <file path="srv/webhook/server.js">
-// /srv/webhook/server.js
-const crypto = require('crypto');
+// /home/coder/srv/webhook/server.js
 const express = require('express');
 const { spawn } = require('child_process');
 
 const app = express();
 app.use(express.json({ type: '*/*' })); // GitHub sends various content-types
 
-const SECRET = process.env.GITHUB_WEBHOOK_SECRET || '';
-const ALLOWED_REPOS = JSON.parse(process.env.ALLOWED_REPOS || '[]'); // ["owner/repo"]
-const ALLOWED_BRANCHES = JSON.parse(process.env.ALLOWED_BRANCHES || '["main"]');
-const DEPLOY = process.env.DEPLOY_SCRIPT || '/srv/deploy/deploy.sh';
-const DEPLOYED_SHAS = new Set(); // simple in-memory dedupe (survives while workspace runs)
-
-function matchesBranch(ref) {
-    // ref like "refs/heads/main"
-    const br = ref.replace(/^refs\/heads\//, '');
-    return ALLOWED_BRANCHES.some(pat => {
-        if (pat.endsWith('/*')) return br.startsWith(pat.slice(0, -2));
-        return br === pat;
-    });
+// ---------- helpers: parse + normalize ----------
+function splitEnvList(raw) {
+    if (!raw || typeof raw !== 'string') return [];
+    // Try JSON first
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {/* fall through */ }
+    // CSV / newline fallback (mirrors Bash sed/tr transformations)
+    return raw
+        .replace(/^\s*\[/, '').replace(/\]\s*$/, '') // strip brackets if present
+        .replace(/"/g, '')
+        .split(/[, \n\r]+/) // commas or whitespace/newlines
+        .map(s => s.trim())
+        .filter(Boolean);
 }
 
-function verifySig(req) {
-    const sig = req.get('x-hub-signature-256') || '';
-    if (!SECRET || !sig.startsWith('sha256=')) return false;
-    const hmac = crypto.createHmac('sha256', SECRET);
-    const payload = JSON.stringify(req.body);
-    const digest = 'sha256=' + hmac.update(payload).digest('hex');
-    // constant-time compare
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(digest));
+// Normalize any of: git@host:owner/repo(.git), https?://host/owner/repo(.git), owner/repo
+// -> canonical: https://host/owner/repo  (owner/repo lowercased, host lowercased, no .git, no trailing slash)
+function normalizeEntry(entry) {
+    if (!entry || typeof entry !== 'string') return null;
+    const s = entry.trim();
+
+    // SSH form
+    let m = s.match(/^git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+    if (m) {
+        const host = m[1].toLowerCase();
+        const owner = m[2].toLowerCase();
+        const repo = m[3].replace(/\.git$/i, '').toLowerCase();
+        return `https://${host}/${owner}/${repo}`;
+    }
+
+    // HTTP(S) form
+    try {
+        const u = new URL(s);
+        const host = u.host.toLowerCase();
+        const parts = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+        if (parts.length >= 2) {
+            const owner = parts[0].toLowerCase();
+            const repo = parts[1].replace(/\.git$/i, '').toLowerCase();
+            return `https://${host}/${owner}/${repo}`;
+        }
+    } catch {/* not a URL */ }
+
+    // owner/repo short form -> assume github.com
+    if (/^[^/\s]+\/[^/\s]+$/.test(s)) {
+        const [owner, repoRaw] = s.split('/');
+        const ownerLC = owner.toLowerCase();
+        const repoLC = repoRaw.replace(/\.git$/i, '').toLowerCase();
+        return `https://github.com/${ownerLC}/${repoLC}`;
+    }
+
+    return null;
 }
 
+// Build canonical from any GitHub push payload
+function canonicalFromPayload(body) {
+    const tryFields = [
+        body?.repository?.html_url,
+        body?.repository?.clone_url,
+        body?.repository?.ssh_url,
+        body?.repository?.full_name, // owner/repo
+    ];
+    for (const v of tryFields) {
+        const canon = normalizeEntry(v);
+        if (canon) return canon;
+    }
+    return null;
+}
+
+// ---------- config ----------
+const RAW_ALLOWED = splitEnvList(process.env.ALLOWED_REPOS || '');
+const ALLOWED_REPOS = Array.from(
+    new Set(RAW_ALLOWED.map(normalizeEntry).filter(Boolean))
+);
+
+const DEPLOY = process.env.DEPLOY_SCRIPT || '/home/coder/srv/deploy/deploy.sh';
+const DEPLOYED_SHAS = new Set(); // per-process de-dupe
+
+console.log("Allowed repos (normalized):", ALLOWED_REPOS);
+
+// ---------- deploy runner with per-repo lock ----------
 function runDeploy(repoName, gitUrl, branch) {
     return new Promise((resolve, reject) => {
-        // simple lock per repoName using a dotfile
         const lock = spawn('bash', ['-lc', `
       set -e
       LOCK="/tmp/deploy_${repoName}.lock"
@@ -820,7 +726,7 @@ function runDeploy(repoName, gitUrl, branch) {
       "${DEPLOY}" "${repoName}" "${gitUrl}" "${branch}"
     `], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-        let out = ''; let err = '';
+        let out = '', err = '';
         lock.stdout.on('data', d => out += d.toString());
         lock.stderr.on('data', d => err += d.toString());
         lock.on('close', code => {
@@ -831,34 +737,39 @@ function runDeploy(repoName, gitUrl, branch) {
     });
 }
 
+// ---------- webhook ----------
 app.post('/webhook/github', async (req, res) => {
     try {
-        if (!verifySig(req)) return res.status(401).json({ error: 'bad signature' });
-
         const event = req.get('x-github-event');
         if (event !== 'push') return res.status(202).json({ status: `ignored:${event}` });
 
-        const repoFull = req.body?.repository?.full_name;   // "owner/repo"
-        const branchRef = req.body?.ref;                    // "refs/heads/main"
+        const canonical = canonicalFromPayload(req.body);
+        const branchRef = req.body?.ref;                     // "refs/heads/main"
+        const branch = branchRef ? branchRef.replace(/^refs\/heads\//, '') : 'main';
         const afterSha = req.body?.after;
-        if (!repoFull || !branchRef || !afterSha)
-            return res.status(400).json({ error: 'missing fields' });
 
-        if (!ALLOWED_REPOS.includes(repoFull))
-            return res.status(403).json({ error: 'repo not allowed' });
+        if (!canonical || !afterSha) {
+            return res.status(400).json({ error: 'missing repo or sha' });
+        }
 
-        if (!matchesBranch(branchRef))
-            return res.status(202).json({ status: 'ignored:branch' });
+        // Allowlist check (if empty, allow all for PoC)
+        if (ALLOWED_REPOS.length && !ALLOWED_REPOS.includes(canonical)) {
+            return res.status(403).json({ error: 'repo not allowed', repo: canonical });
+        }
 
-        if (DEPLOYED_SHAS.has(afterSha))
+        if (DEPLOYED_SHAS.has(afterSha)) {
             return res.status(202).json({ status: 'ignored:duplicate' });
+        }
 
-        // map repo name to subfolder & nginx location
-        const repoName = repoFull.split('/')[1];
-        const gitUrl = `git@github.com:${repoFull}.git`;
-        await runDeploy(repoName, gitUrl, branchRef.replace('refs/heads/', ''));
+        // Extract owner/repo from canonical for naming + SSH clone URL
+        const u = new URL(canonical);
+        const [owner, repo] = u.pathname.replace(/^\//, '').split('/');
+        const repoName = repo;
+        const gitUrl = `git@${u.host}:${owner}/${repo}.git`;
+
+        await runDeploy(repoName, gitUrl, branch);
         DEPLOYED_SHAS.add(afterSha);
-        return res.json({ status: 'deployed', repo: repoName, sha: afterSha });
+        return res.json({ status: 'deployed', repo: repoName, host: u.host, branch, sha: afterSha });
     } catch (e) {
         const code = e.message === 'deploy-in-progress' ? 429 : 500;
         return res.status(code).json({ error: e.message });
@@ -869,6 +780,112 @@ const port = process.env.WEBHOOK_PORT || 4600;
 app.listen(port, '127.0.0.1', () => {
     console.log(`webhook listening on ${port}`);
 });
+</file>
+
+<file path="README.md">
+# coder-pm2-paas
+Docker image for Coder with PM2 Node and NGINX
+
+# srv folder
+this folder includes structure that is used to manage deployments 
+
+# coder folder
+this folder holds coder workspace configuration files
+</file>
+
+<file path="coder/startup.sh">
+set -e
+ 
+# Shell cosmetics
+echo 'export PS1="\[\033[01;34m\]\w\[\033[00m\] $ "' >> ~/.bashrc
+
+# Optional template fallback
+if [ "${CODE_TEMPLATE:-}" = "default" ]; then
+  GIT_REPO="https://bender.sheridanc.on.ca/sikkemha/html-css-js"
+fi
+
+# Snapshot
+echo "======== System Snapshot $(date '+%a %b %d %Y, %I:%M%p') ========"
+coder stat || true
+echo "==============================================================="
+
+# --- Persistent base path for everything ---
+BASE="/home/coder/srv"
+NGINX_CONF="$BASE/nginx/nginx.conf"
+
+# Create base directories if they don't exist
+sudo mkdir -p "$BASE" "$BASE"/{apps,deploy,docs,nginx/conf.d,pm2,webhook}
+sudo mkdir -p "$BASE"/nginx/tmp/{client,proxy,fastcgi,uwsgi,scgi}
+sudo chown -R coder:coder "$BASE"
+
+
+# Seed from image once
+if [ ! -f "$BASE/nginx/nginx.conf" ] && [ -d /opt/bootstrap/srv ]; then
+  cp -r /opt/bootstrap/srv/* "$BASE"/
+fi
+
+# --- Install Express for webhook ---
+cd "$BASE/webhook"
+npm install --omit=dev
+
+# --- SSH setup for git@ clones (optional) ---
+if [ -n "${GIT_SSH_PRIVATE_KEY:-}" ]; then
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  printf '%s\n' "$GIT_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+  chmod 600 ~/.ssh/id_ed25519
+fi
+
+# Seed known_hosts from ALLOWED_REPOS (JSON array or CSV)
+if [ -n "${ALLOWED_REPOS:-}" ]; then
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh
+
+  # Remove wrapping brackets/quotes if JSON
+  CLEANED=$(echo "$ALLOWED_REPOS" | sed 's/[][]//g' | tr -d '"' | tr ',' '\n')
+
+  echo "$CLEANED" | while read -r entry; do
+    entry=$(echo "$entry" | xargs) # trim
+    [ -z "$entry" ] && continue
+
+    # Normalize forms: git@host:owner/repo.git, https://host/owner/repo, owner/repo
+    if [[ "$entry" =~ ^git@([^:]+): ]]; then
+      host="${BASH_REMATCH[1]}"
+    elif [[ "$entry" =~ ^https?://([^/]+)/ ]]; then
+      host="${BASH_REMATCH[1]}"
+    elif [[ "$entry" =~ ^[^/]+/[^/]+$ ]]; then
+      host="github.com"
+    else
+      continue
+    fi
+
+    host=$(echo "$host" | tr '[:upper:]' '[:lower:]')
+    echo "Seeding SSH known_hosts for $host"
+    ssh-keyscan "$host" >> ~/.ssh/known_hosts 2>/dev/null || true
+  done
+
+  chmod 644 ~/.ssh/known_hosts 2>/dev/null || true
+fi
+
+# --- Nginx up ---
+nginx -t -c "$NGINX_CONF" \
+  && (nginx -s reload -c "$NGINX_CONF" || nginx -c "$NGINX_CONF") \
+  || { echo "Nginx config error"; exit 1; }
+
+# --- PM2 up & webhook ---
+export PM2_HOME="${PM2_HOME:-$BASE/.pm2}"
+if [ -f "$PM2_HOME/dump.pm2" ]; then pm2 resurrect || true; fi
+if ! pm2 describe webhook >/dev/null 2>&1; then
+  pm2 start "$BASE/pm2/ecosystem.config.js" --only webhook || pm2 start "$BASE/pm2/ecosystem.config.js"
+fi
+pm2 save || true
+
+# --- Optional first-boot auto-deploy (demo) ---
+if [ ! -s "$BASE/deploy/ports.map" ] && [ -n "${GIT_REPO:-}" ]; then
+  REPO_NAME="$(basename -s .git "$(echo "$GIT_REPO" | sed 's#.*[:/]\([^/]*\)\.git$#\1#')")"
+  "$BASE/deploy/deploy.sh" "$REPO_NAME" "$GIT_REPO" "${DEFAULT_BRANCH:-main}" || echo "initial deploy failed"
+  pm2 save || true
+fi
+
+echo "Startup complete. Public URL: ${PUBLIC_URL}"
 </file>
 
 <file path="Dockerfile">
@@ -913,9 +930,6 @@ RUN apt-get update && \
     apt-get install --yes git \
     && rm -rf /var/lib/apt/lists/*
 
-# Pre-seed GitHub known_hosts to avoid first-clone prompts (optional):
-RUN mkdir -p /home/coder/.ssh && ssh-keyscan github.com >> /home/coder/.ssh/known_hosts && chown -R coder:coder /home/coder/.ssh
-
 
 # Install whichever Node version is LTS 
 RUN curl -sL https://deb.nodesource.com/setup_lts.x | bash -
@@ -951,21 +965,13 @@ RUN userdel -r ubuntu && \
 # Copy system files to seed the container
 COPY --chown=coder:coder srv/ /opt/bootstrap/srv/
 
-
+# Pre-seed GitHub known_hosts to avoid first-clone prompts (optional):
+RUN mkdir -p /home/coder/.ssh && ssh-keyscan github.com >> /home/coder/.ssh/known_hosts && chown -R coder:coder /home/coder/.ssh
 
 USER coder
-RUN pipx ensurepath # adds user's bin directory to PATH
-</file>
 
-<file path="README.md">
-# coder-pm2-paas
-Docker image for Coder with PM2 Node and NGINX
-
-# srv folder
-this folder includes structure that is used to manage deployments 
-
-# coder folder
-this folder holds coder workspace configuration files
+# adds user's bin directory to PATH
+RUN pipx ensurepath
 </file>
 
 </files>

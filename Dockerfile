@@ -74,6 +74,9 @@ RUN userdel -r ubuntu && \
 # Copy system files to seed the container
 COPY --chown=coder:coder srv/ /opt/bootstrap/srv/
 
+# Make the deploy script executable
+RUN chmod +x /opt/bootstrap/srv/deploy/deploy.sh
+
 # Pre-seed GitHub known_hosts to avoid first-clone prompts (optional):
 RUN mkdir -p /home/coder/.ssh && ssh-keyscan github.com >> /home/coder/.ssh/known_hosts && chown -R coder:coder /home/coder/.ssh
 

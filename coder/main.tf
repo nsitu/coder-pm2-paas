@@ -45,17 +45,7 @@ variable "namespace" {
   description = "The Kubernetes namespace to create workspaces in (must exist prior to creating workspaces). If the Coder host is itself running as a Pod on the same Kubernetes cluster as you are deploying workspaces to, set this to the same namespace."
 }
  
- 
-
-data "coder_parameter" "git_repo" {
-  name                = "git_repo"
-  display_name        = "App #1 Git Repository"
-  description = "URL for a Git Repository to deploy as a NodeJS app."
-  icon        = "/icon/git.svg"
-  type        = "string"
-  mutable     = true
-  default     = "https://bender.sheridanc.on.ca/sikkemha/nodejs.git" 
-}
+  
 data "coder_parameter" "allowed_repos" {
   name         = "ALLOWED_REPOS"
   display_name = "Allowed GitHub repos (owner/repo)"
@@ -85,7 +75,7 @@ resource "coder_agent" "main" {
   startup_script         = replace(file("${path.module}/startup.sh"), "\r", "")
  
   # TEST: this may help to tell VS Code Desktop which folder to open
-  dir  = "/home/coder/${data.coder_workspace_owner.me.name}"
+  dir  = "/home/coder"
 
   display_apps {
     vscode          = false
@@ -99,8 +89,7 @@ resource "coder_agent" "main" {
     GIT_AUTHOR_NAME     = "${data.coder_workspace_owner.me.name}"
     GIT_COMMITTER_NAME  = "${data.coder_workspace_owner.me.name}"
     GIT_AUTHOR_EMAIL    = "${data.coder_workspace_owner.me.email}"
-    GIT_COMMITTER_EMAIL = "${data.coder_workspace_owner.me.email}" 
-    GIT_REPO            = "${data.coder_parameter.git_repo.value}" 
+    GIT_COMMITTER_EMAIL = "${data.coder_workspace_owner.me.email}"  
     WORKSPACE_NAME      = "${data.coder_workspace.me.name}"
     WORKSPACE_ID        = "${data.coder_workspace.me.id}"
     PUBLIC_URL          = "https://public--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
@@ -116,11 +105,7 @@ resource "coder_agent" "main" {
   }
  
  
-}
-# It is vital that the workspace folder in the url 
-# Matches the folder that we are actually persisting. 
-# /home/coder/${data.coder_workspace_owner.me.name}
-
+} 
 # NOTE coder modules are frequently updated. 
 # note that version  = "1.0.30" refers to the entire module repo rather than the specific module
 # you can see a complete history of module changes here:/
@@ -135,7 +120,7 @@ module "vscode-web" {
   source         = "registry.coder.com/modules/vscode-web/coder"
   version        = "1.0.30"
   agent_id       = coder_agent.main.id
-  folder   = "/home/coder/${data.coder_workspace_owner.me.name}"
+  folder   = "/home/coder"
   # extensions     = ["github.copilot"]
   settings = {
       "workbench.colorTheme": "Default Dark Modern",
@@ -181,7 +166,7 @@ resource "coder_app" "webapp" {
   slug         = "public"
   display_name = "Public URL"
   url          = "http://localhost:8080"
-  icon         = "https://bender.sheridanc.on.ca/sikkemha/svg-icons/-/raw/main/html.svg"
+  icon         = "https://www.w3.org/html/logo/downloads/HTML5_Logo.svg"
   subdomain    = true
   share        = "public"
   healthcheck {
