@@ -1,0 +1,201 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2025-08-14T15:09:41.940Z",
+  "slots": {
+    "a": {
+      "subdomain": "a",
+      "repository": "",
+      "branch": "main",
+      "environment": {},
+      "status": "empty",
+      "port": 3001,
+      "memory_limit": "512M",
+      "restart_policy": "on-failure",
+      "max_restarts": 5,
+      "health_check": {
+        "enabled": true,
+        "path": "/health",
+        "timeout": 5000,
+        "interval": 30000
+      },
+      "build": {
+        "enabled": true,
+        "command": "npm run build",
+        "cache": true
+      },
+      "deployment": {
+        "strategy": "rolling",
+        "backup": true,
+        "pre_deploy_hooks": [],
+        "post_deploy_hooks": []
+      },
+      "monitoring": {
+        "enabled": true,
+        "alerts": {
+          "memory_threshold": 80,
+          "cpu_threshold": 80,
+          "error_rate_threshold": 5
+        }
+      },
+      "created_at": "2025-08-14T15:09:41.946Z",
+      "last_deploy": null,
+      "deploy_count": 0
+    },
+    "b": {
+      "subdomain": "b",
+      "repository": "",
+      "branch": "main",
+      "environment": {},
+      "status": "empty",
+      "port": 3002,
+      "memory_limit": "512M",
+      "restart_policy": "on-failure",
+      "max_restarts": 5,
+      "health_check": {
+        "enabled": true,
+        "path": "/health",
+        "timeout": 5000,
+        "interval": 30000
+      },
+      "build": {
+        "enabled": true,
+        "command": "npm run build",
+        "cache": true
+      },
+      "deployment": {
+        "strategy": "rolling",
+        "backup": true,
+        "pre_deploy_hooks": [],
+        "post_deploy_hooks": []
+      },
+      "monitoring": {
+        "enabled": true,
+        "alerts": {
+          "memory_threshold": 80,
+          "cpu_threshold": 80,
+          "error_rate_threshold": 5
+        }
+      },
+      "created_at": "2025-08-14T15:09:41.946Z",
+      "last_deploy": null,
+      "deploy_count": 0
+    },
+    "c": {
+      "subdomain": "c",
+      "repository": "",
+      "branch": "main",
+      "environment": {},
+      "status": "empty",
+      "port": 3003,
+      "memory_limit": "512M",
+      "restart_policy": "on-failure",
+      "max_restarts": 5,
+      "health_check": {
+        "enabled": true,
+        "path": "/health",
+        "timeout": 5000,
+        "interval": 30000
+      },
+      "build": {
+        "enabled": true,
+        "command": "npm run build",
+        "cache": true
+      },
+      "deployment": {
+        "strategy": "rolling",
+        "backup": true,
+        "pre_deploy_hooks": [],
+        "post_deploy_hooks": []
+      },
+      "monitoring": {
+        "enabled": true,
+        "alerts": {
+          "memory_threshold": 80,
+          "cpu_threshold": 80,
+          "error_rate_threshold": 5
+        }
+      },
+      "created_at": "2025-08-14T15:09:41.946Z",
+      "last_deploy": null,
+      "deploy_count": 0
+    },
+    "d": {
+      "subdomain": "d",
+      "repository": "",
+      "branch": "main",
+      "environment": {},
+      "status": "empty",
+      "port": 3004,
+      "memory_limit": "512M",
+      "restart_policy": "on-failure",
+      "max_restarts": 5,
+      "health_check": {
+        "enabled": true,
+        "path": "/health",
+        "timeout": 5000,
+        "interval": 30000
+      },
+      "build": {
+        "enabled": true,
+        "command": "npm run build",
+        "cache": true
+      },
+      "deployment": {
+        "strategy": "rolling",
+        "backup": true,
+        "pre_deploy_hooks": [],
+        "post_deploy_hooks": []
+      },
+      "monitoring": {
+        "enabled": true,
+        "alerts": {
+          "memory_threshold": 80,
+          "cpu_threshold": 80,
+          "error_rate_threshold": 5
+        }
+      },
+      "created_at": "2025-08-14T15:09:41.946Z",
+      "last_deploy": null,
+      "deploy_count": 0
+    },
+    "e": {
+      "subdomain": "e",
+      "repository": "",
+      "branch": "main",
+      "environment": {},
+      "status": "empty",
+      "port": 3005,
+      "memory_limit": "512M",
+      "restart_policy": "on-failure",
+      "max_restarts": 5,
+      "health_check": {
+        "enabled": true,
+        "path": "/health",
+        "timeout": 5000,
+        "interval": 30000
+      },
+      "build": {
+        "enabled": true,
+        "command": "npm run build",
+        "cache": true
+      },
+      "deployment": {
+        "strategy": "rolling",
+        "backup": true,
+        "pre_deploy_hooks": [],
+        "post_deploy_hooks": []
+      },
+      "monitoring": {
+        "enabled": true,
+        "alerts": {
+          "memory_threshold": 80,
+          "cpu_threshold": 80,
+          "error_rate_threshold": 5
+        }
+      },
+      "created_at": "2025-08-14T15:09:41.946Z",
+      "last_deploy": null,
+      "deploy_count": 0
+    }
+  }
+}

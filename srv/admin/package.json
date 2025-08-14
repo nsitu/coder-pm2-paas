@@ -1,0 +1,15 @@
+{
+    "name": "admin-panel",
+    "version": "1.0.0",
+    "description": "Admin panel for slot-based deployment management",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js",
+        "dev": "node server.js"
+    },
+    "dependencies": {
+        "express": "^4.21.2",
+        "ejs": "^3.1.10"
+    },
+    "private": true
+}

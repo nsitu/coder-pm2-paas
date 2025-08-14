@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>Logs - Slot <%=
+            slotId.toUpperCase()
+            %
+        >
+    </title>
+    <link
+        rel="stylesheet"
+        href="/style.css"
+    >
+    <style>
+        .logs-toolbar {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .logs-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .logs-viewer {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+            max-height: 70vh;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .logs-viewer .log-line {
+            margin-bottom: 2px;
+            padding: 2px 0;
+        }
+
+        .logs-viewer .log-error {
+            color: #f48771;
+            background: rgba(244, 135, 113, 0.1);
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        .logs-viewer .log-warn {
+            color: #dcdcaa;
+            background: rgba(220, 220, 170, 0.1);
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        .logs-viewer .log-info {
+            color: #9cdcfe;
+        }
+
+        .logs-viewer .log-timestamp {
+            color: #808080;
+            font-weight: normal;
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filter-input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            min-width: 200px;
+        }
+
+        @media (max-width: 768px) {
+            .logs-toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .logs-controls {
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+
+            .filter-input {
+                min-width: 150px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 Logs - Slot <%=
+                    slotId.toUpperCase()
+                    %
+                >
+            </h1>
+            <p>Real-time application logs for slot <%=
+                    slotId
+                    %
+                >
+            </p>
+        </div>
+
+        <div class="logs-toolbar">
+            <div class="logs-controls">
+                <input
+                    type="text"
+                    id="filter-input"
+                    placeholder="Filter logs..."
+                    class="filter-input"
+                >
+                <button
+                    class="btn btn-primary"
+                    onclick="refreshLogs()"
+                >
+                    🔄 Refresh
+                </button>
+                <button
+                    class="btn btn-secondary"
+                    onclick="clearLogs()"
+                >
+                    🗑️ Clear
+                </button>
+                <button
+                    class="btn btn-info"
+                    onclick="downloadLogs()"
+                >
+                    💾 Download
+                </button>
+            </div>
+
+            <div class="auto-refresh">
+                <label>
+                    <input
+                        type="checkbox"
+                        id="auto-refresh"
+                        checked
+                    > Auto-refresh
+                </label>
+                <select id="refresh-interval">
+                    <option value="2000">2s</option>
+                    <option
+                        value="5000"
+                        selected
+                    >5s</option>
+                    <option value="10000">10s</option>
+                    <option value="30000">30s</option>
+                </select>
+            </div>
+        </div>
+
+        <div
+            class="logs-viewer"
+            id="logs-output"
+        >
+            <div class="log-line log-info">Loading logs for slot <%=
+                    slotId
+                    %
+                >...</div>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center;">
+            <a
+                href="/"
+                class="btn btn-secondary"
+            >← Back to Dashboard</a>
+            <%
+                if
+                (slotId)
+                {
+                %
+            >
+                <a
+                    href="/config/<%= slotId %>"
+                    class="btn btn-primary"
+                >⚙️ Configure Slot</a>
+                <%
+                    }
+                    %
+                >
+        </div>
+
+        <div
+            class="mt-3"
+            style="max-width: 800px; margin: 20px auto;"
+        >
+            <div class="alert alert-info">
+                <strong>💡 Log Tips:</strong>
+                <ul style="margin: 10px 0 0 20px;">
+                    <li>Use the filter to search for specific log entries</li>
+                    <li>Auto-refresh keeps logs updated in real-time</li>
+                    <li>Error and warning messages are highlighted</li>
+                    <li>Download logs to save them locally</li>
+                    <li>Logs are automatically rotated and cleaned up</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+        let allLogs = [];
+        let filteredLogs = [];
+
+        // Initialize logs viewer
+        document.addEventListener('DOMContentLoaded', () => {
+            loadLogs();
+            setupAutoRefresh();
+            setupFilter();
+        });
+
+        async function loadLogs() {
+            try {
+                const response = await fetch('/api/logs/<%= slotId %>');
+                const result = await response.json();
+
+                allLogs = result.logs || [];
+                filterLogs();
+                displayLogs();
+            } catch (error) {
+                console.error('Error loading logs:', error);
+                document.getElementById('logs-output').innerHTML =
+                    '<div class="log-line log-error">Error loading logs: ' + error.message + '</div>';
+            }
+        }
+
+        function displayLogs() {
+            const logsOutput = document.getElementById('logs-output');
+
+            if (filteredLogs.length === 0) {
+                logsOutput.innerHTML = '<div class="log-line log-info">No logs available</div>';
+                return;
+            }
+
+            const formattedLogs = filteredLogs.map(formatLogLine).join('\n');
+            logsOutput.innerHTML = formattedLogs;
+
+            // Auto-scroll to bottom
+            logsOutput.scrollTop = logsOutput.scrollHeight;
+        }
+
+        function formatLogLine(line) {
+            if (!line || line.trim() === '') return '';
+
+            // Detect log level and add appropriate styling
+            let className = 'log-line';
+
+            if (line.toLowerCase().includes('error') || line.toLowerCase().includes('err')) {
+                className += ' log-error';
+            } else if (line.toLowerCase().includes('warn') || line.toLowerCase().includes('warning')) {
+                className += ' log-warn';
+            } else if (line.toLowerCase().includes('info')) {
+                className += ' log-info';
+            }
+
+            // Escape HTML and format timestamps
+            const escapedLine = escapeHtml(line);
+            const timestampPattern = /(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)/g;
+            const formattedLine = escapedLine.replace(timestampPattern, '<span class="log-timestamp">$1</span>');
+
+            return `<div class="${className}">${formattedLine}</div>`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function filterLogs() {
+            const filterValue = document.getElementById('filter-input').value.toLowerCase();
+
+            if (!filterValue) {
+                filteredLogs = [...allLogs];
+            } else {
+                filteredLogs = allLogs.filter(line =>
+                    line.toLowerCase().includes(filterValue)
+                );
+            }
+        }
+
+        function setupFilter() {
+            const filterInput = document.getElementById('filter-input');
+            let filterTimeout;
+
+            filterInput.addEventListener('input', () => {
+                clearTimeout(filterTimeout);
+                filterTimeout = setTimeout(() => {
+                    filterLogs();
+                    displayLogs();
+                }, 300);
+            });
+        }
+
+        function setupAutoRefresh() {
+            const autoRefreshCheckbox = document.getElementById('auto-refresh');
+            const refreshInterval = document.getElementById('refresh-interval');
+
+            function updateAutoRefresh() {
+                clearInterval(autoRefreshInterval);
+
+                if (autoRefreshCheckbox.checked) {
+                    const interval = parseInt(refreshInterval.value);
+                    autoRefreshInterval = setInterval(loadLogs, interval);
+                }
+            }
+
+            autoRefreshCheckbox.addEventListener('change', updateAutoRefresh);
+            refreshInterval.addEventListener('change', updateAutoRefresh);
+
+            // Start auto-refresh
+            updateAutoRefresh();
+        }
+
+        function refreshLogs() {
+            loadLogs();
+        }
+
+        function clearLogs() {
+            allLogs = [];
+            filteredLogs = [];
+            document.getElementById('logs-output').innerHTML =
+                '<div class="log-line log-info">Logs cleared</div>';
+        }
+
+        function downloadLogs() {
+            const logText = allLogs.join('\n');
+            const blob = new Blob([logText], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `slot-<%= slotId %>-logs-${new Date().toISOString().slice(0, 19)}.log`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            clearInterval(autoRefreshInterval);
+        });
+    </script>
+</body>
+
+</html>

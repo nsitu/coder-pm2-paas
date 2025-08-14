@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>Deployment Admin Panel</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .slots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .slot-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .slot-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .slot-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin: 0;
+        }
+
+        .status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .status.empty {
+            background: #f0f0f0;
+            color: #666;
+        }
+
+        .status.deployed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            flex: 1;
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #212529;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .global-actions {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>🚀 Deployment Admin Panel</h1>
+        <p>Manage your 5 application deployment slots</p>
+    </div>
+
+    <div class="global-actions">
+        <h2>Global Actions</h2>
+        <div class="button-group">
+            <button
+                class="btn btn-success"
+                onclick="deployAll()"
+            >Deploy All Configured Slots</button>
+            <button
+                class="btn btn-warning"
+                onclick="restartAll()"
+            >Restart All Running Apps</button>
+        </div>
+    </div>
+
+    <div class="slots-grid">
+        <%
+            Object.entries(slots).forEach(([slotId,
+            slot])=
+        > { %>
+            <div class="slot-card">
+                <div class="slot-header">
+                    <h3 class="slot-title">Slot <%=
+                            slotId.toUpperCase()
+                            %
+                        > (<%=
+                                slot.subdomain
+                                %
+                            >)</h3>
+                    <span class="status <%= slot.status %>">
+                        <%=
+                            slot.status.toUpperCase()
+                            %
+                        >
+                    </span>
+                </div>
+
+                <form id="slot-<%= slotId %>-form">
+                    <div class="form-group">
+                        <label for="repo-<%= slotId %>">Repository URL:</label>
+                        <input
+                            type="url"
+                            id="repo-<%= slotId %>"
+                            name="repository"
+                            value="<%= slot.repository %>"
+                            placeholder="https://github.com/user/repo"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="branch-<%= slotId %>">Branch:</label>
+                        <input
+                            type="text"
+                            id="branch-<%= slotId %>"
+                            name="branch"
+                            value="<%= slot.branch %>"
+                            placeholder="main"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label>Environment Variables:</label>
+                        <div id="env-<%= slotId %>">
+                            <%
+                                Object.entries(slot.environment
+                                ||
+                                {}).forEach(([key,
+                                value])=
+                            > { %>
+                                <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+                                    <input
+                                        type="text"
+                                        placeholder="KEY"
+                                        value="<%= key %>"
+                                        style="flex: 1;"
+                                    >
+                                    <input
+                                        type="text"
+                                        placeholder="VALUE"
+                                        value="<%= value %>"
+                                        style="flex: 1;"
+                                    >
+                                    <button
+                                        type="button"
+                                        onclick="removeEnvVar(this)"
+                                        style="width: 30px;"
+                                    >×</button>
+                                </div>
+                                <%
+                                    });
+                                    %
+                                >
+                        </div>
+                        <button
+                            type="button"
+                            onclick="addEnvVar('<%= slotId %>')"
+                            class="btn btn-primary"
+                            style="width: 100%; margin-top: 5px;"
+                        >+ Add Environment Variable</button>
+                    </div>
+
+                    <div class="button-group">
+                        <button
+                            type="button"
+                            class="btn btn-primary"
+                            onclick="saveSlot('<%= slotId %>')"
+                        >Save Config</button>
+                        <button
+                            type="button"
+                            class="btn btn-success"
+                            onclick="deploySlot('<%= slotId %>')"
+                        >Deploy</button>
+                        <button
+                            type="button"
+                            class="btn btn-warning"
+                            onclick="restartSlot('<%= slotId %>')"
+                        >Restart</button>
+                    </div>
+                </form>
+
+                <div style="margin-top: 15px;">
+                    <button
+                        class="btn btn-primary"
+                        onclick="viewLogs('<%= slotId %>')"
+                        style="width: 100%;"
+                    >View Logs</button>
+                </div>
+            </div>
+            <%
+                });
+                %
+            >
+    </div>
+
+    <script>
+        // Add environment variable input
+        function addEnvVar(slotId) {
+            const container = document.getElementById(`env-${slotId}`);
+            const div = document.createElement('div');
+            div.style.display = 'flex';
+            div.style.gap = '5px';
+            div.style.marginBottom = '5px';
+            div.innerHTML = `
+                <input type="text" placeholder="KEY" style="flex: 1;">
+                <input type="text" placeholder="VALUE" style="flex: 1;">
+                <button type="button" onclick="removeEnvVar(this)" style="width: 30px;">×</button>
+            `;
+            container.appendChild(div);
+        }
+
+        // Remove environment variable input
+        function removeEnvVar(button) {
+            button.parentElement.remove();
+        }
+
+        // Save slot configuration
+        async function saveSlot(slotId) {
+            const form = document.getElementById(`slot-${slotId}-form`);
+            const formData = new FormData(form);
+
+            // Collect environment variables
+            const envContainer = document.getElementById(`env-${slotId}`);
+            const envVars = {};
+            const envDivs = envContainer.children;
+
+            for (let i = 0; i < envDivs.length; i++) {
+                const inputs = envDivs[i].querySelectorAll('input');
+                if (inputs.length === 2 && inputs[0].value && inputs[1].value) {
+                    envVars[inputs[0].value] = inputs[1].value;
+                }
+            }
+
+            const payload = {
+                repository: formData.get('repository'),
+                branch: formData.get('branch'),
+                environment: envVars
+            };
+
+            try {
+                const response = await fetch(`/api/slots/${slotId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    alert('Configuration saved successfully!');
+                } else {
+                    alert('Failed to save configuration');
+                }
+            } catch (error) {
+                alert('Error saving configuration: ' + error.message);
+            }
+        }
+
+        // Deploy slot
+        async function deploySlot(slotId) {
+            try {
+                const response = await fetch(`/api/deploy/${slotId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                alert(result.message);
+            } catch (error) {
+                alert('Error deploying slot: ' + error.message);
+            }
+        }
+
+        // Restart slot
+        async function restartSlot(slotId) {
+            try {
+                const response = await fetch(`/api/restart/${slotId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                alert(result.message);
+            } catch (error) {
+                alert('Error restarting slot: ' + error.message);
+            }
+        }
+
+        // Deploy all slots
+        async function deployAll() {
+            try {
+                const response = await fetch('/api/deploy-all', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                alert(result.message);
+            } catch (error) {
+                alert('Error deploying all slots: ' + error.message);
+            }
+        }
+
+        // Restart all slots
+        async function restartAll() {
+            alert('Restart all functionality not yet implemented');
+        }
+
+        // View logs
+        function viewLogs(slotId) {
+            // Open logs in new window
+            window.open(`/logs/${slotId}`, '_blank');
+        }
+    </script>
+</body>
+
+</html>

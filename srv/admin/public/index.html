@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>PaaS Admin Panel</title>
+    <link
+        rel="stylesheet"
+        href="/style.css"
+    >
+    <link
+        rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>"
+    >
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🚀 PaaS Admin Panel</h1>
+            <p>Manage your 5 application deployment slots with ease</p>
+        </div>
+
+        <!-- Navigation -->
+        <div class="nav-tabs">
+            <button
+                class="nav-tab active"
+                data-tab="dashboard"
+            >Dashboard</button>
+            <button
+                class="nav-tab"
+                data-tab="logs"
+            >Logs</button>
+            <button
+                class="nav-tab"
+                data-tab="settings"
+            >Settings</button>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div
+            id="dashboard-tab"
+            class="tab-content active"
+        >
+            <!-- Global Actions -->
+            <div class="global-actions">
+                <h2>Global Actions</h2>
+                <div class="button-group">
+                    <button
+                        class="btn btn-success btn-lg"
+                        onclick="adminPanel.deployAll()"
+                    >
+                        🚀 Deploy All Configured Slots
+                    </button>
+                    <button
+                        class="btn btn-primary btn-lg"
+                        onclick="adminPanel.saveAllSlots()"
+                    >
+                        💾 Save All Configurations
+                    </button>
+                    <button
+                        class="btn btn-info btn-lg"
+                        onclick="window.open('https://pgadmin--' + window.location.hostname.split('--').slice(1).join('--'), '_blank')"
+                    >
+                        🗄️ Open Database Admin
+                    </button>
+                </div>
+            </div>
+
+            <!-- Slots Grid -->
+            <div
+                class="slots-grid"
+                id="slots-container"
+            >
+                <!-- Slots will be dynamically loaded here -->
+                <div class="slot-card">
+                    <div class="slot-header">
+                        <div>
+                            <h3 class="slot-title">Loading...</h3>
+                            <p class="slot-url">Please wait while we load your slots</p>
+                        </div>
+                        <span class="status empty">LOADING</span>
+                    </div>
+                    <div style="text-align: center; padding: 40px;">
+                        <div class="loading"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div
+            id="logs-tab"
+            class="tab-content"
+        >
+            <div id="logs-container">
+                <!-- Logs interface will be dynamically loaded here -->
+            </div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div
+            id="settings-tab"
+            class="tab-content"
+        >
+            <div id="settings-container">
+                <!-- Settings interface will be dynamically loaded here -->
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="text-align: center; margin-top: 40px; padding: 20px; color: #6c757d;">
+            <p>
+                <strong>Coder PM2 PaaS</strong> -
+                Phase 2 Implementation |
+                <a
+                    href="https://github.com/nsitu/coder-pm2-paas"
+                    target="_blank"
+                >GitHub</a>
+            </p>
+            <p>
+                <kbd>Ctrl/Cmd + S</kbd> Save All |
+                <kbd>Ctrl/Cmd + D</kbd> Deploy All
+            </p>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+
+</html>

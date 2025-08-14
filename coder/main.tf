@@ -46,14 +46,44 @@ variable "namespace" {
 }
  
   
-data "coder_parameter" "allowed_repos" {
-  name         = "ALLOWED_REPOS"
-  display_name = "Allowed GitHub repos (owner/repo)"
-  type         = "list(string)"
+data "coder_parameter" "slot_a_subdomain" {
+  name         = "SLOT_A_SUBDOMAIN"
+  display_name = "Slot A Subdomain"
+  type         = "string"
   mutable      = true
-  default      = jsonencode([
-    "https://github.com/nsitu/express-hello-world"
-  ])
+  default      = "a"
+}
+
+data "coder_parameter" "slot_b_subdomain" {
+  name         = "SLOT_B_SUBDOMAIN"
+  display_name = "Slot B Subdomain"
+  type         = "string"
+  mutable      = true
+  default      = "b"
+}
+
+data "coder_parameter" "slot_c_subdomain" {
+  name         = "SLOT_C_SUBDOMAIN"
+  display_name = "Slot C Subdomain"
+  type         = "string"
+  mutable      = true
+  default      = "c"
+}
+
+data "coder_parameter" "slot_d_subdomain" {
+  name         = "SLOT_D_SUBDOMAIN"
+  display_name = "Slot D Subdomain"
+  type         = "string"
+  mutable      = true
+  default      = "d"
+}
+
+data "coder_parameter" "slot_e_subdomain" {
+  name         = "SLOT_E_SUBDOMAIN"
+  display_name = "Slot E Subdomain"
+  type         = "string"
+  mutable      = true
+  default      = "e"
 }
  
   
@@ -96,12 +126,24 @@ resource "coder_agent" "main" {
     EDITOR_URL          = "https://${local.workspace_slug}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
     SETTINGS_URL        = "https://${local.ixd_domain}/@${local.username}/${data.coder_workspace.me.name}"
     USERNAME            = "${local.username}"
-    # TEMPLATE_MODE       = "${data.coder_parameter.template_mode.value}"
     PORT                = 8080   
 
-    ALLOWED_REPOS          = "${data.coder_parameter.allowed_repos.value}" 
-    DEFAULT_BRANCH         = "main" 
+    # Slot subdomain parameters
+    SLOT_A_SUBDOMAIN    = "${data.coder_parameter.slot_a_subdomain.value}"
+    SLOT_B_SUBDOMAIN    = "${data.coder_parameter.slot_b_subdomain.value}"
+    SLOT_C_SUBDOMAIN    = "${data.coder_parameter.slot_c_subdomain.value}"
+    SLOT_D_SUBDOMAIN    = "${data.coder_parameter.slot_d_subdomain.value}"
+    SLOT_E_SUBDOMAIN    = "${data.coder_parameter.slot_e_subdomain.value}"
+    
+    # Database configuration
+    POSTGRES_HOST       = "localhost"
+    POSTGRES_PORT       = "5432"
+    POSTGRES_DB         = "workspace_db"
+    POSTGRES_USER       = "coder"
+    POSTGRES_PASSWORD   = "coder_dev_password"
+    DATABASE_URL        = "postgresql://coder:coder_dev_password@localhost:5432/workspace_db"
 
+    DEFAULT_BRANCH      = "main" 
   }
  
  
@@ -178,6 +220,112 @@ resource "coder_app" "webapp" {
   }
 }
 
+resource "coder_app" "admin" {
+  agent_id     = coder_agent.main.id
+  slug         = "admin"
+  display_name = "Admin Panel"
+  url          = "http://localhost:9000"
+  icon         = "⚙️"
+  subdomain    = true
+  share        = "owner"
+  healthcheck {
+    url       = "http://localhost:9000"
+    interval  = 10
+    threshold = 5
+  }
+}
+
+resource "coder_app" "pgadmin" {
+  agent_id     = coder_agent.main.id
+  slug         = "pgadmin"
+  display_name = "PGAdmin"
+  url          = "http://localhost:5050"
+  icon         = "🐘"
+  subdomain    = true
+  share        = "owner"
+  healthcheck {
+    url       = "http://localhost:5050"
+    interval  = 15
+    threshold = 3
+  }
+}
+
+# Individual slot apps
+resource "coder_app" "slot_a" {
+  agent_id     = coder_agent.main.id
+  slug         = data.coder_parameter.slot_a_subdomain.value
+  display_name = "Slot A (${data.coder_parameter.slot_a_subdomain.value})"
+  url          = "http://localhost:3001"
+  icon         = "🅰️"
+  subdomain    = true
+  share        = "public"
+  healthcheck {
+    url       = "http://localhost:3001"
+    interval  = 10
+    threshold = 3
+  }
+}
+
+resource "coder_app" "slot_b" {
+  agent_id     = coder_agent.main.id
+  slug         = data.coder_parameter.slot_b_subdomain.value
+  display_name = "Slot B (${data.coder_parameter.slot_b_subdomain.value})"
+  url          = "http://localhost:3002"
+  icon         = "🅱️"
+  subdomain    = true
+  share        = "public"
+  healthcheck {
+    url       = "http://localhost:3002"
+    interval  = 10
+    threshold = 3
+  }
+}
+
+resource "coder_app" "slot_c" {
+  agent_id     = coder_agent.main.id
+  slug         = data.coder_parameter.slot_c_subdomain.value
+  display_name = "Slot C (${data.coder_parameter.slot_c_subdomain.value})"
+  url          = "http://localhost:3003"
+  icon         = "©️"
+  subdomain    = true
+  share        = "public"
+  healthcheck {
+    url       = "http://localhost:3003"
+    interval  = 10
+    threshold = 3
+  }
+}
+
+resource "coder_app" "slot_d" {
+  agent_id     = coder_agent.main.id
+  slug         = data.coder_parameter.slot_d_subdomain.value
+  display_name = "Slot D (${data.coder_parameter.slot_d_subdomain.value})"
+  url          = "http://localhost:3004"
+  icon         = "🇩"
+  subdomain    = true
+  share        = "public"
+  healthcheck {
+    url       = "http://localhost:3004"
+    interval  = 10
+    threshold = 3
+  }
+}
+
+resource "coder_app" "slot_e" {
+  agent_id     = coder_agent.main.id
+  slug         = data.coder_parameter.slot_e_subdomain.value
+  display_name = "Slot E (${data.coder_parameter.slot_e_subdomain.value})"
+  url          = "http://localhost:3005"
+  icon         = "🇪"
+  subdomain    = true
+  share        = "public"
+  healthcheck {
+    url       = "http://localhost:3005"
+    interval  = 10
+    threshold = 3
+  }
+}
+
  
 # NOTE: the storage amount is hard coded to 1Gigabyte here
 # this is different from the NodeJS workspace, where it is parameterized.
@@ -205,7 +353,7 @@ resource "kubernetes_persistent_volume_claim" "home" {
     access_modes = ["ReadWriteOnce"]
     resources {
       requests = {
-        storage = "512Mi"
+        storage = "2Gi"
       }
     }
   }
@@ -278,12 +426,12 @@ resource "kubernetes_deployment" "main" {
           }
           resources {
             requests = {
-              "cpu"    = "250m"
-              "memory" = "512Mi"
+              "cpu"    = "500m"
+              "memory" = "1Gi"
             }
             limits = {
-              "cpu"    = "1000m"
-              "memory" = "2Gi"
+              "cpu"    = "2000m"
+              "memory" = "4Gi"
             }
           }
           volume_mount {

@@ -7,12 +7,132 @@
         name="viewport"
         content="width=device-width, initial-scale=1.0"
     >
-    <title>PaaS Server for NodeJS Apps</title>
+    <title>Simplified PaaS for Node.js Apps</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: #f8f9fa;
+        }
+
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #7f8c8d;
+            font-size: 1.2em;
+            margin-bottom: 30px;
+        }
+
+        .slots {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 30px 0;
+        }
+
+        .slot {
+            padding: 20px;
+            background: #ecf0f1;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .admin-link {
+            display: inline-block;
+            background: #3498db;
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 6px;
+            margin: 20px 10px 0 0;
+        }
+
+        .admin-link:hover {
+            background: #2980b9;
+        }
+
+        .pgadmin-link {
+            display: inline-block;
+            background: #27ae60;
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 6px;
+            margin: 20px 10px 0 0;
+        }
+
+        .pgadmin-link:hover {
+            background: #229954;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>PaaS Server for NodeJS Apps</h1>
-    <p>Powered by PM2 and NGINX</p>
+    <div class="container">
+        <h1>🚀 PaaS Server for NodeJS Apps</h1>
+        <p class="subtitle">Powered by PM2, NGINX, and PostgreSQL</p>
+
+        <p>This workspace provides 5 deployment slots for your Node.js applications, plus database support.</p>
+
+        <div class="slots">
+            <div class="slot">Slot A</div>
+            <div class="slot">Slot B</div>
+            <div class="slot">Slot C</div>
+            <div class="slot">Slot D</div>
+            <div class="slot">Slot E</div>
+        </div>
+
+        <h2>Getting Started</h2>
+        <ol>
+            <li>Access the <strong>Admin Panel</strong> to configure your deployment slots</li>
+            <li>Configure repository URLs and environment variables for each slot</li>
+            <li>Deploy your applications using the admin interface</li>
+            <li>Use <strong>PGAdmin</strong> to manage your PostgreSQL databases</li>
+        </ol>
+
+        <div>
+            <a
+                href="/admin/"
+                class="admin-link"
+            >🔧 Admin Panel</a>
+            <a
+                href="/pgadmin/"
+                class="pgadmin-link"
+            >🐘 PGAdmin</a>
+        </div>
+
+        <h2>Features</h2>
+        <ul>
+            <li><strong>5 Application Slots</strong> - Deploy up to 5 different Node.js apps</li>
+            <li><strong>PostgreSQL Database</strong> - Full database support with persistence</li>
+            <li><strong>Environment Variables</strong> - Configure per-application settings</li>
+            <li><strong>GitHub Integration</strong> - Webhook-based deployments</li>
+            <li><strong>Process Management</strong> - PM2 for reliable application runtime</li>
+            <li><strong>Web Interface</strong> - Easy-to-use admin panel</li>
+        </ul>
+
+        <h2>Default Environment Variables</h2>
+        <p>Each deployed application automatically receives:</p>
+        <ul>
+            <li><code>PORT</code> - Application port (3001-3005)</li>
+            <li><code>SLOT_NAME</code> - Slot identifier (a-e)</li>
+            <li><code>DATABASE_URL</code> - PostgreSQL connection string</li>
+            <li><code>POSTGRES_HOST</code>, <code>POSTGRES_PORT</code>, etc. - Database connection details</li>
+        </ul>
+    </div>
 </body>
 
 </html>

@@ -1,0 +1,10 @@
+2024-08-14T10:30:15.123Z [INFO] Starting application on port 3001
+2024-08-14T10:30:15.245Z [INFO] Database connection established
+2024-08-14T10:30:15.346Z [INFO] Express server listening on port 3001
+2024-08-14T10:30:20.567Z [INFO] GET / - 200 - 45ms
+2024-08-14T10:30:25.789Z [INFO] GET /api/users - 200 - 12ms
+2024-08-14T10:31:10.234Z [WARN] High memory usage detected: 85%
+2024-08-14T10:31:15.456Z [INFO] POST /api/login - 200 - 234ms
+2024-08-14T10:32:05.678Z [ERROR] Database connection lost, attempting reconnect
+2024-08-14T10:32:06.123Z [INFO] Database reconnected successfully
+2024-08-14T10:32:30.345Z [INFO] GET /health - 200 - 3ms

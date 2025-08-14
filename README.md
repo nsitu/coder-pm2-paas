@@ -33,7 +33,7 @@ A Platform-as-a-Service (PaaS) solution built for [Coder](https://coder.com) wor
 1. **Via Webhook** (Recommended): Configure a GitHub webhook pointing to `https://your-workspace-url/__hook/github`
 2. **Manual Deployment**: Use the deploy script directly:
    ```bash
-   /home/coder/srv/deploy/deploy.sh app-name https://github.com/owner/repo.git main
+   /home/coder/srv/scripts/slot-deploy.sh app-name https://github.com/owner/repo.git main
    ```
 
 ### Accessing Your Apps
@@ -55,7 +55,13 @@ srv/
 
 ### Core Components
 
-#### Deployment Engine (`srv/deploy/deploy.sh`)
+#### Scripts Directory (`srv/scripts/`)
+
+Contains all operational scripts for the PaaS system:
+- **`slot-deploy.sh`** - Enhanced deployment script with comprehensive features
+- **`process-manager.sh`** - Process management system replacing PM2
+- **`config-manager.js`** - Configuration management and validation
+- **`health-check.sh`** - System health monitoring and diagnostics
 - Clones/updates git repositories
 - Installs dependencies and runs build scripts
 - Configures NGINX routes and PM2 processes
