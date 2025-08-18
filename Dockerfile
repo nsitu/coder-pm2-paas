@@ -7,14 +7,13 @@ ENV TZ="America/Toronto"
 # Add all repositories first
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends software-properties-common curl ca-certificates && \
-    # Add Git PPA for latest version
     add-apt-repository ppa:git-core/ppa && \
-    # Add PostgreSQL official repository
     apt-get install -y postgresql-common && \
+    # prevent auto creation of default postgres cluster "17/main"
+    # must be in place BEFORE installing postgresql-17
+    printf 'create_main_cluster = false\n' | tee /etc/postgresql-common/createcluster.conf >/dev/null && \
     /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && \
-    # Add Node.js LTS repository
     curl -sL https://deb.nodesource.com/setup_lts.x | bash - && \
-    # Single comprehensive update after all repositories are added
     apt-get update
 
 # Install all packages in single optimized layer
@@ -24,6 +23,7 @@ RUN apt-get upgrade --yes --no-install-recommends --no-install-suggests && \
     dnsutils \
     git \
     htop \
+    iproute2 \
     jq \
     locales \
     lsof \
@@ -45,6 +45,8 @@ RUN apt-get upgrade --yes --no-install-recommends --no-install-suggests && \
     vim \
     wget \
     zip && \
+    # Verify no default cluster was auto-created (pg_lsclusters prints only header)
+    test "$(pg_lsclusters | wc -l)" -eq 1 || (echo 'Auto-created cluster detected:' && pg_lsclusters && exit 1) && \
     # Clean up aggressively to reduce image size
     apt-get autoremove -y && \
     apt-get clean && \
@@ -57,7 +59,8 @@ RUN npm install -g npm@latest && \
     /opt/pgadmin-venv/bin/pip install --no-cache-dir pgadmin4 && \
     # Create symlink for easy access
     ln -s /opt/pgadmin-venv/bin/pgadmin4 /usr/local/bin/pgadmin4 && \
-    mkdir -p /var/lib/pgladmin /var/log/pgladmin && \
+    # Create pgadmin directories with proper permissions for coder user
+    mkdir -p /var/lib/pgadmin /var/log/pgadmin && \
     # Clean up all caches
     rm -rf /root/.cache/pip /root/.npm /tmp/*
 
@@ -69,14 +72,16 @@ RUN locale-gen en_US.UTF-8 && \
     --shell=/bin/bash \
     --uid=1000 \
     --user-group && \
-    echo "coder ALL=(ALL) NOPASSWD:ALL" >>/etc/sudoers.d/nopasswd
+    echo "coder ALL=(ALL) NOPASSWD:ALL" >>/etc/sudoers.d/nopasswd && \
+    # Give coder user access to pgadmin directories
+    chown -R coder:coder /var/lib/pgadmin /var/log/pgadmin
 
 ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
 # Add PostgreSQL 17 binaries to PATH
-ENV PATH="/usr/lib/postgresql/17/bin:$PATH"
+ENV PATH="/usr/lib/postgresql/17/bin:/opt/pgadmin-venv/bin:$PATH"
 
 # Copy system files and setup permissions in single layer
 COPY --chown=coder:coder srv/ /opt/bootstrap/srv/
@@ -85,4 +90,12 @@ RUN chmod +x /opt/bootstrap/srv/scripts/*.sh && \
     ssh-keyscan github.com >> /home/coder/.ssh/known_hosts && \
     chown -R coder:coder /home/coder/.ssh
 
+RUN mkdir -p /home/coder/data/postgres /home/coder/data/logs/postgres && \
+    chown -R coder:coder /home/coder/data
+
 USER coder
+
+# Pre-install Node dependencies for admin and placeholders
+RUN set -eux; \
+    cd /opt/bootstrap/srv/admin && npm install --omit=dev; \
+    cd /opt/bootstrap/srv/placeholders && npm install --omit=dev

@@ -38,8 +38,16 @@ if [[ ! "$SLOT" =~ ^[a-e]$ ]]; then
 fi
 
 # Configuration
-BASE="/home/harold/coder-pm2-paas/srv"
-DATA_DIR="/home/harold/coder-pm2-paas/data"
+# Determine base directory - works in both local dev and Coder workspace
+if [ -d "/home/coder/srv" ]; then
+  # Running in Coder workspace
+  BASE="/home/coder/srv"
+  DATA_DIR="/home/coder/data"
+else
+  # Running locally
+  BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  DATA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/data"
+fi
 APP_DIR="$BASE/apps/$SLOT"
 CONFIG_FILE="$BASE/admin/config/slots.json"
 LOG_FILE="$DATA_DIR/logs/deploy-$SLOT.log"

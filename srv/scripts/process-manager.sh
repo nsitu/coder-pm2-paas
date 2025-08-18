@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Process Management System - Replaces PM2 functionality
+# Process Management System 
 # This script manages application processes for each slot
 
 set -euo pipefail
 
 # Configuration
-BASE="/home/harold/coder-pm2-paas/srv"
-DATA_DIR="/home/harold/coder-pm2-paas/data"
+# Determine base directory - works in both local dev and Coder workspace
+if [ -d "/home/coder/srv" ]; then
+  # Running in Coder workspace
+  BASE="/home/coder/srv"
+  DATA_DIR="/home/coder/data"
+else
+  # Running locally
+  BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  DATA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/data"
+fi
 CONFIG_FILE="$BASE/admin/config/slots.json"
 
 # Color codes

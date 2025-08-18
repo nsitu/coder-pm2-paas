@@ -6,6 +6,16 @@ const { spawn, exec } = require('child_process');
 const app = express();
 const port = process.env.PORT || 9000;
 
+// Path helper function - works in both local dev and Coder workspace
+function getScriptPath(scriptName) {
+    // Check if we're in Coder workspace
+    if (fs.existsSync('/home/coder/srv/scripts')) {
+        return path.join('/home/coder/srv/scripts', scriptName);
+    }
+    // Local development - relative to admin directory
+    return path.join(__dirname, '..', 'scripts', scriptName);
+}
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -167,7 +177,7 @@ app.post('/api/deploy/:slot', (req, res) => {
     }
 
     // Use enhanced deployment script
-    const deployScript = path.join(__dirname, '..', 'deploy', 'slot-deploy.sh');
+    const deployScript = getScriptPath('slot-deploy.sh');
     const child = spawn('bash', [deployScript, slotId, slot.repository, slot.branch || 'main'], {
         stdio: 'pipe',
         env: { ...process.env, PATH: process.env.PATH }
@@ -236,7 +246,7 @@ app.post('/api/restart/:slot', (req, res) => {
     }
 
     // Use process manager to restart
-    const processManager = path.join(__dirname, '..', 'deploy', 'process-manager.sh');
+    const processManager = getScriptPath('process-manager.sh');
     const child = spawn('bash', [processManager, 'restart', slotId], {
         stdio: 'pipe'
     });
@@ -276,7 +286,7 @@ app.post('/api/deploy-all', (req, res) => {
     Object.entries(config.slots).forEach(([slotId, slot]) => {
         if (slot.repository) {
             promises.push(new Promise((resolve) => {
-                const deployScript = '/home/coder/srv/scripts/slot-deploy.sh';
+                const deployScript = getScriptPath('slot-deploy.sh');
                 const child = spawn('bash', [deployScript, slotId, slot.repository, slot.branch || 'main']);
                 child.on('close', (code) => resolve({ slot: slotId, success: code === 0 }));
             }));
@@ -327,7 +337,7 @@ app.post('/webhook', (req, res) => {
         const branch = req.body?.ref?.replace('refs/heads/', '') || slot.branch || 'main';
 
         // Deploy the matching slot using enhanced script
-        const deployScript = path.join(__dirname, '..', 'deploy', 'slot-deploy.sh');
+        const deployScript = getScriptPath('slot-deploy.sh');
         const child = spawn('bash', [deployScript, slotId, slot.repository, branch]);
 
         child.on('close', (code) => {
@@ -353,7 +363,7 @@ app.post('/webhook', (req, res) => {
 
 // Get detailed process information
 app.get('/api/processes', (req, res) => {
-    const processManager = path.join(__dirname, '..', 'deploy', 'process-manager.sh');
+    const processManager = getScriptPath('process-manager.sh');
     const child = spawn('bash', [processManager, 'list'], {
         stdio: 'pipe'
     });
@@ -386,7 +396,7 @@ app.get('/api/processes', (req, res) => {
 // Get detailed information for a specific slot
 app.get('/api/processes/:slot', (req, res) => {
     const slotId = req.params.slot;
-    const processManager = path.join(__dirname, '..', 'deploy', 'process-manager.sh');
+    const processManager = getScriptPath('process-manager.sh');
     const child = spawn('bash', [processManager, 'info', slotId], {
         stdio: 'pipe'
     });
@@ -419,7 +429,7 @@ app.get('/api/processes/:slot', (req, res) => {
 // Stop a specific slot
 app.post('/api/processes/:slot/stop', (req, res) => {
     const slotId = req.params.slot;
-    const processManager = path.join(__dirname, '..', 'deploy', 'process-manager.sh');
+    const processManager = getScriptPath('process-manager.sh');
     const child = spawn('bash', [processManager, 'stop', slotId], {
         stdio: 'pipe'
     });
@@ -514,7 +524,7 @@ app.post('/api/deploy-all', (req, res) => {
     let completed = 0;
 
     deployments.forEach(({ slot, repository, branch }) => {
-        const deployScript = path.join(__dirname, '..', 'deploy', 'slot-deploy.sh');
+        const deployScript = getScriptPath('slot-deploy.sh');
         const child = spawn('bash', [deployScript, slot, repository, branch]);
 
         child.on('close', (code) => {

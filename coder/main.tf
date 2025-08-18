@@ -101,8 +101,14 @@ data "coder_workspace_owner" "me" {}
 
 resource "coder_agent" "main" {
   os                     = "linux"
-  arch                   = "amd64" 
-  startup_script         = replace(file("${path.module}/startup.sh"), "\r", "")
+  arch                   = "amd64"  
+ 
+
+  #  Note:  the startup script is now defined as a separate resource.
+  # startup_script           = <<-EOT
+  #   bash -lc '/home/coder/coder/startup.sh'
+  # EOT
+  # startup_script_behavior  = "blocking" 
  
   # TEST: this may help to tell VS Code Desktop which folder to open
   dir  = "/home/coder"
@@ -122,11 +128,13 @@ resource "coder_agent" "main" {
     GIT_COMMITTER_EMAIL = "${data.coder_workspace_owner.me.email}"  
     WORKSPACE_NAME      = "${data.coder_workspace.me.name}"
     WORKSPACE_ID        = "${data.coder_workspace.me.id}"
+    ADMIN_URL           = "https://admin--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
     PUBLIC_URL          = "https://public--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
     EDITOR_URL          = "https://${local.workspace_slug}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
     SETTINGS_URL        = "https://${local.ixd_domain}/@${local.username}/${data.coder_workspace.me.name}"
     USERNAME            = "${local.username}"
-    PORT                = 8080   
+    ADMIN_PORT          = 9000
+    IXD_DOMAIN          = "${local.ixd_domain}"   
 
     # Slot subdomain parameters
     SLOT_A_SUBDOMAIN    = "${data.coder_parameter.slot_a_subdomain.value}"
@@ -148,6 +156,50 @@ resource "coder_agent" "main" {
  
  
 } 
+
+resource "coder_script" "startup" {
+  agent_id           = coder_agent.main.id
+  display_name       = "Workspace Startup"
+  run_on_start       = true              # run on workspace start
+  start_blocks_login = true              # block until finished (recommended)
+  # Use replace(...) to strip any accidental CRLFs that can break Bash (e.g., invalid option name for pipefail)
+  script             = replace(file("${path.module}/startup.sh"), "\r", "")
+}
+
+# Detached runtime services (non-blocking). These run concurrently on start and
+# each script is responsible for its own readiness gating.
+resource "coder_script" "service_admin" {
+  agent_id           = coder_agent.main.id
+  display_name       = "Admin Service"
+  run_on_start       = true
+  start_blocks_login = false
+  script             = replace(file("${path.module}/admin.sh"), "\r", "")
+}
+
+resource "coder_script" "service_monitor" {
+  agent_id           = coder_agent.main.id
+  display_name       = "Process Monitor"
+  run_on_start       = true
+  start_blocks_login = false
+  script             = replace(file("${path.module}/monitor.sh"), "\r", "")
+}
+
+resource "coder_script" "service_pgadmin" {
+  agent_id           = coder_agent.main.id
+  display_name       = "pgAdmin"
+  run_on_start       = true
+  start_blocks_login = false
+  script             = replace(file("${path.module}/pgadmin.sh"), "\r", "")
+}
+
+resource "coder_script" "service_placeholders" {
+  agent_id           = coder_agent.main.id
+  display_name       = "Slot Placeholders"
+  run_on_start       = true
+  start_blocks_login = false
+  script             = replace(file("${path.module}/placeholders.sh"), "\r", "")
+}
+
 # NOTE coder modules are frequently updated. 
 # note that version  = "1.0.30" refers to the entire module repo rather than the specific module
 # you can see a complete history of module changes here:/
@@ -203,29 +255,12 @@ module "vscode-web" {
  
   
 
-resource "coder_app" "webapp" {
-  agent_id     = coder_agent.main.id
-  slug         = "public"
-  display_name = "Public URL"
-  url          = "http://localhost:8080"
-  icon         = "https://www.w3.org/html/logo/downloads/HTML5_Logo.svg"
-  subdomain    = true
-  share        = "public"
-  healthcheck {
-    # Note: this health check assumes that LiveServer is running,
-    # as indeed it should be based on startup.sh
-    url       = "http://localhost:8080"
-    interval  = 5
-    threshold = 6
-  }
-}
-
 resource "coder_app" "admin" {
   agent_id     = coder_agent.main.id
   slug         = "admin"
   display_name = "Admin Panel"
   url          = "http://localhost:9000"
-  icon         = "⚙️"
+  icon         = "/icon/widgets.svg"
   subdomain    = true
   share        = "owner"
   healthcheck {
@@ -240,7 +275,7 @@ resource "coder_app" "pgadmin" {
   slug         = "pgadmin"
   display_name = "PGAdmin"
   url          = "http://localhost:5050"
-  icon         = "🐘"
+  icon         = "/icon/database.svg"
   subdomain    = true
   share        = "owner"
   healthcheck {
@@ -254,9 +289,9 @@ resource "coder_app" "pgadmin" {
 resource "coder_app" "slot_a" {
   agent_id     = coder_agent.main.id
   slug         = data.coder_parameter.slot_a_subdomain.value
-  display_name = "Slot A (${data.coder_parameter.slot_a_subdomain.value})"
+  display_name = "${data.coder_parameter.slot_a_subdomain.value}"
   url          = "http://localhost:3001"
-  icon         = "🅰️"
+  icon         = "/icon/nodejs.svg"
   subdomain    = true
   share        = "public"
   healthcheck {
@@ -269,9 +304,9 @@ resource "coder_app" "slot_a" {
 resource "coder_app" "slot_b" {
   agent_id     = coder_agent.main.id
   slug         = data.coder_parameter.slot_b_subdomain.value
-  display_name = "Slot B (${data.coder_parameter.slot_b_subdomain.value})"
+  display_name = "${data.coder_parameter.slot_b_subdomain.value}"
   url          = "http://localhost:3002"
-  icon         = "🅱️"
+  icon         = "/icon/nodejs.svg"
   subdomain    = true
   share        = "public"
   healthcheck {
@@ -284,9 +319,9 @@ resource "coder_app" "slot_b" {
 resource "coder_app" "slot_c" {
   agent_id     = coder_agent.main.id
   slug         = data.coder_parameter.slot_c_subdomain.value
-  display_name = "Slot C (${data.coder_parameter.slot_c_subdomain.value})"
+  display_name = "${data.coder_parameter.slot_c_subdomain.value}"
   url          = "http://localhost:3003"
-  icon         = "©️"
+  icon         = "/icon/nodejs.svg"
   subdomain    = true
   share        = "public"
   healthcheck {
@@ -299,9 +334,9 @@ resource "coder_app" "slot_c" {
 resource "coder_app" "slot_d" {
   agent_id     = coder_agent.main.id
   slug         = data.coder_parameter.slot_d_subdomain.value
-  display_name = "Slot D (${data.coder_parameter.slot_d_subdomain.value})"
+  display_name = "${data.coder_parameter.slot_d_subdomain.value}"
   url          = "http://localhost:3004"
-  icon         = "🇩"
+  icon         = "/icon/nodejs.svg"
   subdomain    = true
   share        = "public"
   healthcheck {
@@ -314,9 +349,9 @@ resource "coder_app" "slot_d" {
 resource "coder_app" "slot_e" {
   agent_id     = coder_agent.main.id
   slug         = data.coder_parameter.slot_e_subdomain.value
-  display_name = "Slot E (${data.coder_parameter.slot_e_subdomain.value})"
+  display_name = "${data.coder_parameter.slot_e_subdomain.value}"
   url          = "http://localhost:3005"
-  icon         = "🇪"
+  icon         = "/icon/nodejs.svg"
   subdomain    = true
   share        = "public"
   healthcheck {

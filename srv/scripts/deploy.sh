@@ -1,13 +1,21 @@
-#!/usr/bin/env bash
-# Simple deployment script - no PM2 or NGINX needed
+#!/usr/bin/env bash 
 set -euo pipefail
 
 SLOT="${1:?slot name required (a-e)}"
 REPO_URL="${2:?git url required}"
 BRANCH="${3:-main}"
 
-BASE="/home/harold/coder-pm2-paas/srv"
-DATA_DIR="/home/harold/coder-pm2-paas/data"
+# Determine base directory - works in both local dev and Coder workspace
+if [ -d "/home/coder/srv" ]; then
+  # Running in Coder workspace
+  BASE="/home/coder/srv"
+  DATA_DIR="/home/coder/data"
+else
+  # Running locally
+  BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  DATA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/data"
+fi
+
 APP_DIR="$BASE/apps/$SLOT"
 CONFIG_FILE="$BASE/admin/config/slots.json"
 
@@ -15,6 +23,21 @@ CONFIG_FILE="$BASE/admin/config/slots.json"
 PORT=$((3000 + $(echo "$SLOT" | tr 'abcde' '12345')))
 
 echo "🚀 Deploying slot $SLOT on port $PORT"
+
+# If running in Coder workspace, stop placeholder server to free ports
+if [ -d "/home/coder/srv" ]; then
+  PLACEHOLDER_PID_FILE="/home/coder/data/pids/placeholder-server.pid"
+  if [ -f "$PLACEHOLDER_PID_FILE" ]; then
+    PH_PID=$(cat "$PLACEHOLDER_PID_FILE" 2>/dev/null || echo "")
+    if [ -n "$PH_PID" ] && kill -0 "$PH_PID" 2>/dev/null; then
+      echo "🛑 Stopping placeholder server (PID $PH_PID)..."
+      kill "$PH_PID" 2>/dev/null || true
+      sleep 1
+      kill -9 "$PH_PID" 2>/dev/null || true
+    fi
+    rm -f "$PLACEHOLDER_PID_FILE"
+  fi
+fi
 
 # Stop existing process if running
 echo "🛑 Stopping existing app..."
@@ -122,4 +145,17 @@ if curl -s "http://localhost:$PORT/health" >/dev/null 2>&1 || curl -s "http://lo
 else
   echo "❌ Application failed to start - check logs: $DATA_DIR/logs/slot-$SLOT.log"
   exit 1
+fi
+
+# Restart placeholder server so it serves remaining empty slots (it will skip used ports)
+if [ -d "/home/coder/srv" ]; then
+  if [ -f "/home/coder/coder/placeholders.sh" ]; then
+    echo "🔁 Restarting placeholder server..."
+    /usr/bin/env bash /home/coder/coder/placeholders.sh || true
+  elif [ -f "/home/coder/srv/placeholders/server.js" ]; then
+    echo "🔁 Starting placeholder server (direct)..."
+    ADMIN_URL=${ADMIN_URL:-http://localhost:9000} \
+      setsid sh -c "exec node /home/coder/srv/placeholders/server.js >> /home/coder/data/logs/placeholder-server.log 2>&1" </dev/null >/dev/null 2>&1 &
+    echo $! > "/home/coder/data/pids/placeholder-server.pid"
+  fi
 fi
