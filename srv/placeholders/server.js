@@ -1,7 +1,7 @@
-/* Dynamic placeholder server for slots A–E using a single Express app
+/* Simplified placeholder server for slots A–E using a single Express app
  * - Listens on ports 3001–3005 in one process
  * - Detects slot by req.socket.localPort
- * - Renders overview at '/' and slot page for any other path
+ * - Renders slot page for any path except /healthz
  * - ADMIN_URL from env or derived from Host; fallback http://localhost:9000
  * - SLOT_[A–E]_SUBDOMAIN env vars with defaults a–e
  */
@@ -33,42 +33,6 @@ function deriveAdminUrl(req) {
         }
     }
     return 'http://localhost:9000';
-}
-
-function indexHtml(adminUrl) {
-    return `<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Slot Overview</title>
-<style>
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:20px;background:#f8f9fa;}
-.container{max-width:800px;margin:0 auto;background:white;padding:40px;border-radius:12px;box-shadow:0 4px 6px rgba(0,0,0,.1);} 
-h1{color:#2c3e50;margin-bottom:10px;}
-.subtitle{color:#7f8c8d;font-size:1.2em;margin-bottom:30px;}
-.slots-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin:30px 0;}
-.slot-card{background:#f8f9fa;padding:20px;border-radius:8px;text-align:center;border:2px solid #e9ecef;transition:all .3s ease;}
-.slot-card:hover{border-color:#3498db;transform:translateY(-2px);} 
-.slot-card a{text-decoration:none;color:#2c3e50;}
-.admin-link{display:inline-block;background:#3498db;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;margin:20px 0;}
-.admin-link:hover{background:#2980b9;}
-</style></head>
-<body><div class="container">
-<h1>NodeJS App Server</h1>
-<p class="subtitle">Platform for Node.js Applications</p>
-<a href="${adminUrl}" class="admin-link">🔧 Open Admin Panel</a>
-<h2>Available Deployment Slots</h2>
-<div class="slots-grid">
-${SLOTS.map(
-        (s) => `
-  <div class="slot-card">
-    <a href="http://localhost:${s.port}">
-      <h3>🎰 Slot ${s.letter}</h3>
-      <p>Port ${s.port}</p>
-    </a>
-  </div>`
-    ).join('')}
-</div>
-</div></body></html>`;
 }
 
 function slotHtml(slot, adminUrl) {
@@ -105,13 +69,7 @@ const app = express();
 // Health for probes
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
-// Overview on root for every port
-app.get('/', (req, res) => {
-    res.set('Content-Type', 'text/html; charset=utf-8');
-    res.send(indexHtml(deriveAdminUrl(req)));
-});
-
-// Everything else → slot placeholder, based on local port
+// All other routes → slot placeholder, based on local port
 app.get('*', (req, res) => {
     const port = req.socket.localPort;
     const slot = slotByPort.get(port);

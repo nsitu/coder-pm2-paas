@@ -155,7 +155,7 @@ if [ -d "/home/coder/srv" ]; then
   elif [ -f "/home/coder/srv/placeholders/server.js" ]; then
     echo "🔁 Starting placeholder server (direct)..."
     ADMIN_URL=${ADMIN_URL:-http://localhost:9000} \
-      setsid sh -c "exec node /home/coder/srv/placeholders/server.js >> /home/coder/data/logs/placeholder-server.log 2>&1" </dev/null >/dev/null 2>&1 &
+      setsid sh -c "exec node /home/coder/srv/placeholders/server.js >> /home/coder/logs/placeholder-server.log 2>&1" </dev/null >/dev/null 2>&1 &
     echo $! > "/home/coder/data/pids/placeholder-server.pid"
   fi
 fi

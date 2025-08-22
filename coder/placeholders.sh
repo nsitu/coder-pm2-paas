@@ -4,12 +4,12 @@ set -Eeuo pipefail
 # Detach from Coder pipes
 exec </dev/null >/dev/null 2>&1
 
-LOG_DIR="/home/coder/data/logs"
+LOG_DIR="/home/coder/logs"
 PID_DIR="/home/coder/data/pids"
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 # ADMIN_URL is already set in the environment by the main.tf
-WAIT_URL="http://localhost:${ADMIN_PORT:-9000}"
+WAIT_URL="http://localhost:9000"
 PLACEHOLDER_DIR="/home/coder/srv/placeholders"
 PLACEHOLDER_SERVER_JS="$PLACEHOLDER_DIR/server.js"
 LOG_FILE="$LOG_DIR/placeholder-server.log"

@@ -109,11 +109,8 @@ class AdminPanel {
         card.className = 'slot-card';
         card.dataset.slot = slotId;
 
-        const subdomain = slot.subdomain || slotId;
-        const workspaceName = window.location.hostname.split('--')[1] || 'workspace';
-        const userName = window.location.hostname.split('--')[2] || 'user';
-        const domain = window.location.hostname.split('--').slice(3).join('--') || 'localhost';
-        const slotUrl = `https://${subdomain}--${workspaceName}--${userName}.${domain}`;
+        // Use the URL provided by the backend
+        const slotUrl = slot.url || '#';
 
         card.innerHTML = `
             <div class="slot-header">
@@ -159,7 +156,7 @@ class AdminPanel {
 
                 <div class="button-group">
                     <button type="button" class="btn btn-primary" onclick="adminPanel.saveSlot('${slotId}')">
-                        Save Config
+                        Save
                     </button>
                     <button type="button" class="btn btn-success" onclick="adminPanel.deploySlot('${slotId}')">
                         Deploy
@@ -231,7 +228,7 @@ class AdminPanel {
 
     // Slot Operations
     async saveSlot(slotId) {
-        const form = document.querySelector(`[data-slot="${slotId}"]`);
+        const form = document.querySelector(`.slot-form[data-slot="${slotId}"]`);
         const formData = new FormData(form);
 
         const payload = {

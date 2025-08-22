@@ -1,30 +1,14 @@
 #!/usr/bin/env bash
-set -Eeuxo pipefail
+set -Eeuo pipefail
+#  set -x (tracing: print each command before executing)
+
+# ensure we report the full context in case of errors
 trap 'src="${BASH_SOURCE[0]:-?}"; line="${LINENO:-?}"; cmd="${BASH_COMMAND:-?}"; echo "ERROR at ${src}:${line}: ${cmd}" >&2' ERR
+
+# redirect standard input (stdin) from /dev/null
+# ensures the script is non-interactive and doesn't hang waiting for input
 exec </dev/null
-
-# Debug logging (keep this for now)
-echo "=== STARTUP DEBUG ===" >> /tmp/startup_debug.log
-echo "Time: $(date)" >> /tmp/startup_debug.log
-echo "PID: $$" >> /tmp/startup_debug.log
-echo "PPID: $PPID" >> /tmp/startup_debug.log
-echo "Parent command: $(ps -p $PPID -o comm=)" >> /tmp/startup_debug.log
-echo "Full parent: $(ps -p $PPID -o args=)" >> /tmp/startup_debug.log
-echo "===================" >> /tmp/startup_debug.log
-
-
-# Better xtrace prefix: timestamp + pid + lineno
-# export PS4='+ [${EPOCHREALTIME}] pid=$$ line=${LINENO}: '
-
-# Use flock for atomic locking
-LOCKFILE="/tmp/startup.lock"
-exec 200>"$LOCKFILE"
-if ! flock -n 200; then
-    echo "Startup script already running. Exiting."
-    exit 0
-fi
-echo "Acquired lock on FD200: $(readlink -f /proc/$$/fd/200 || true)"
-
+ 
 # Decide mode: first boot vs rehydrate
 BOOT_MODE="first"
 if [ -f /home/coder/.startup_complete ]; then
@@ -33,37 +17,42 @@ if [ -f /home/coder/.startup_complete ]; then
 fi
 
 # Colors for output
-RED='\033[0;31m'
+RED='\033[0;35m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE} Starting Workspace...${NC}"
+echo -e "${CYAN} Starting Workspace...${NC}"
 
 # Shell cosmetics for better UX
 echo 'export PS1="\[\033[01;34m\]\w\[\033[00m\] $ "' >> ~/.bashrc || true
 
 # System snapshot for debugging
-echo -e "${BLUE}======== System Snapshot $(date '+%a %b %d %Y, %I:%M%p') ========${NC}"
+echo -e "${CYAN}=== System Snapshot $(date '+%a %b %d %Y, %I:%M%p') ========${NC}"
 coder stat || true
-echo -e "${BLUE}===============================================================${NC}"
+echo -e "${CYAN}=========================================${NC}"
 
 # Create necessary directories, bootstrap, SSH, deps (first boot only)
 if [ "$BOOT_MODE" = "first" ]; then
   echo -e "${YELLOW}📁 Creating directory structure...${NC}"
+  # Create data directories
   sudo mkdir -p \
     /home/coder/data/postgres \
     /home/coder/data/pgadmin \
     /home/coder/data/backups \
-    /home/coder/data/logs \
-    /home/coder/data/pids \
+    /home/coder/logs \
+    /home/coder/data/pids 
+  sudo chown -R coder:coder /home/coder/data
+  # Create srv directories 
+  sudo mkdir -p \
     /home/coder/srv/apps/{a,b,c,d,e} \
     /home/coder/srv/scripts \
-    /home/coder/srv/admin \
-    /home/coder/srv/docs
-  sudo chown -R coder:coder /home/coder/srv /home/coder/data
-
+    /home/coder/srv/admin 
+  sudo chown -R coder:coder /home/coder/srv  
+  
+  # Note: there may be some duplication here since 
+  # the bootstrap files below will also create some directories in /home/coder/srv
   echo -e "${YELLOW}📋 Setting up bootstrap files...${NC}"
   if [ ! -f "/home/coder/srv/admin/server.js" ] && [ -d "/opt/bootstrap/srv" ]; then
     cp -r /opt/bootstrap/srv/* /home/coder/srv/ 2>/dev/null || true
@@ -71,52 +60,34 @@ if [ "$BOOT_MODE" = "first" ]; then
   chmod +x /home/coder/srv/scripts/*.sh 2>/dev/null || true
 
   echo -e "${YELLOW}🔑 Setting up SSH access...${NC}"
+  # ensure ~/.ssh exists in the mounted home and seed github.com known_hosts
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh || true
+  if [ ! -f ~/.ssh/known_hosts ] || ! grep -q 'github.com' ~/.ssh/known_hosts 2>/dev/null; then
+    ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+    chmod 644 ~/.ssh/known_hosts || true
+  fi
+  # TODO: investigate the workflow for GIT_SSH_PRIVATE_KEY 
   if [ -n "${GIT_SSH_PRIVATE_KEY:-}" ]; then
-    mkdir -p ~/.ssh && chmod 700 ~/.ssh
     printf '%s\n' "$GIT_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
     chmod 600 ~/.ssh/id_ed25519
     echo -e "${GREEN}  ✅ SSH private key configured${NC}"
   fi
-
-  # Seed known_hosts from ALLOWED_REPOS
-  if [ -n "${ALLOWED_REPOS:-}" ]; then
-    mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    echo -e "${YELLOW}  🌐 Seeding SSH known_hosts...${NC}"
-    CLEANED=$(echo "$ALLOWED_REPOS" | sed 's/[][]//g' | tr -d '"' | tr ',' '\n')
-    echo "$CLEANED" | while read -r entry; do
-      entry=$(echo "$entry" | xargs); [ -z "$entry" ] && continue
-      if [[ "$entry" =~ ^git@([^:]+): ]]; then host="${BASH_REMATCH[1]}";
-      elif [[ "$entry" =~ ^https?://([^/]+)/ ]]; then host="${BASH_REMATCH[1]}";
-      elif [[ "$entry" =~ ^[^/]+/[^/]+$ ]]; then host="github.com";
-      else continue; fi
-      host=$(echo "$host" | tr '[:upper:]' '[:lower:]')
-      ssh-keyscan "$host" >> ~/.ssh/known_hosts 2>/dev/null || true
-    done
-    chmod 644 ~/.ssh/known_hosts 2>/dev/null || true
-    echo -e "${GREEN}  ✅ SSH known_hosts configured${NC}"
-  fi
-
-  echo -e "${YELLOW}📦 Installing admin dependencies...${NC}"
-  cd /home/coder/srv/admin
-  if [ ! -d "node_modules" ] && [ -f "package.json" ]; then
-    npm install --omit=dev --silent
-    echo -e "${GREEN}  ✅ Admin dependencies installed${NC}"
-  fi
+  # TODO: Seed other useful  known_hosts (e.g. bender.sheridanc.on.ca)
 
   # PostgreSQL initdb on first boot only (startup is handled below for both modes)
-  echo -e "${BLUE}🐘 Initializing PostgreSQL 17...${NC}"
-  if [ ! -f "/home/coder/data/postgres/data/PG_VERSION" ]; then
+  echo -e "${CYAN}🐘 Initializing PostgreSQL 17...${NC}"
+  if [ ! -f "/home/coder/data/postgres/PG_VERSION" ]; then
     echo -e "${YELLOW}  📊 Creating new PostgreSQL database cluster...${NC}"
     sudo install -d -m 0750 -o coder -g coder /home/coder/data/postgres
-    /usr/lib/postgresql/17/bin/initdb -D /home/coder/data/postgres/data
+    /usr/lib/postgresql/17/bin/initdb -D /home/coder/data/postgres
     # Ensure socket in /tmp and listen on loopback
     {
       echo "unix_socket_directories = '/tmp'"
       echo "listen_addresses = '127.0.0.1'"
-    } >> /home/coder/data/postgres/data/postgresql.conf
+    } >> /home/coder/data/postgres/postgresql.conf
     # Ensure TCP auth from localhost
-    if ! grep -q '127.0.0.1/32' /home/coder/data/postgres/data/pg_hba.conf; then
-      echo "host all all 127.0.0.1/32 scram-sha-256" >> /home/coder/data/postgres/data/pg_hba.conf
+    if ! grep -q '127.0.0.1/32' /home/coder/data/postgres/pg_hba.conf; then
+      echo "host all all 127.0.0.1/32 scram-sha-256" >> /home/coder/data/postgres/pg_hba.conf
     fi
     echo -e "${GREEN}  ✅ PostgreSQL 17 initialized${NC}"
   else
@@ -126,18 +97,13 @@ fi
 
 # Ensure PostgreSQL running (both modes), then DB/user ensure on first boot
 echo -e "${YELLOW}  🚀 Starting PostgreSQL 17 server...${NC}"
-mkdir -p /home/coder/data/logs
 
-PGDATA="/home/coder/data/postgres/data"
+
+PGDATA="/home/coder/data/postgres"
 PGPORT="${PGPORT:-5432}"
-PGREADY_HOST="${PGREADY_HOST:-127.0.0.1}"
+PGREADY_HOST="${PGREADY_HOST:-127.0.0.1}"   
 
-PGLOG_DIR="/home/coder/data/logs/postgres"
-PGLOG="$PGLOG_DIR/postgres.log"
-mkdir -p "$PGLOG_DIR"
-chown coder:coder "$PGLOG_DIR"
-
-# Fix ownership and permissions for persistent PGDATA tree
+# Ownership and permissions for persistent PGDATA tree
 chown -R coder:coder "$(dirname "$PGDATA")" || true
 chmod 750 "$(dirname "$PGDATA")" || true
 [ -d "$PGDATA" ] && chmod 700 "$PGDATA" || true
@@ -154,12 +120,12 @@ else
     rm -f "$PGDATA/postmaster.pid" || true
   fi
   set +e
-  /usr/lib/postgresql/17/bin/pg_ctl -D "$PGDATA" -o "-p $PGPORT -k /tmp" -l "$PGLOG" -w -t 20 start
+  /usr/lib/postgresql/17/bin/pg_ctl -D "$PGDATA" -o "-p $PGPORT -k /tmp" -l "/home/coder/logs/postgres.log" -w -t 20 start
   start_rc=$?
   set -e
   if [ $start_rc -ne 0 ]; then
     echo -e "${YELLOW}  ⚠️  pg_ctl start failed (rc=$start_rc). Tail of log:${NC}"
-    tail -n 100 "$PGLOG" || true
+    tail -n 100 "/home/coder/logs/postgres.log" || true
   fi
 fi
 
@@ -180,10 +146,15 @@ if [ "$BOOT_MODE" = "first" ]; then
     $PSQL -c "CREATE ROLE coder LOGIN SUPERUSER;"
   $PSQL -c "ALTER ROLE coder WITH PASSWORD 'coder_dev_password';"
   $PSQL -tc "SELECT 1 FROM pg_database WHERE datname='workspace_db';" | grep -q 1 || \
-    $PSQL -c "CREATE DATABASE workspace_db OWNER coder;"
-  # Optional: also create a convenience 'coder' database
-  # $PSQL -tc "SELECT 1 FROM pg_database WHERE datname='coder';" | grep -q 1 || \
-  #   $PSQL -c "CREATE DATABASE coder OWNER coder;"
+    $PSQL -c "CREATE DATABASE workspace_db OWNER coder;" 
+  
+  # Initialize a simple test table and insert a success row
+  # Connect to the newly ensured workspace_db using the same TCP params
+  PSQL_WS="$PSQL -d workspace_db"
+  # Create table: id (serial PK), datetime (timestamp with time zone), status (text)
+  $PSQL_WS -c "CREATE TABLE IF NOT EXISTS test ( id SERIAL PRIMARY KEY,  datetime TIMESTAMPTZ NOT NULL DEFAULT now(), status TEXT NOT NULL );" || true
+  # Insert a success row with current timestamp
+  $PSQL_WS -c "INSERT INTO test (datetime, status) VALUES (CURRENT_TIMESTAMP, 'success');" || true
   echo -e "${GREEN}  ✅ Workspace database configured${NC}"
 fi
 
@@ -195,5 +166,4 @@ else
   echo -e "${GREEN}🔁 Quick rehydrate mode${NC}"
 fi
 
-exec 200>&-  # Close the lock file descriptor before exiting
 exit 0

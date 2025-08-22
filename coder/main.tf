@@ -133,7 +133,6 @@ resource "coder_agent" "main" {
     EDITOR_URL          = "https://${local.workspace_slug}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
     SETTINGS_URL        = "https://${local.ixd_domain}/@${local.username}/${data.coder_workspace.me.name}"
     USERNAME            = "${local.username}"
-    ADMIN_PORT          = 9000
     IXD_DOMAIN          = "${local.ixd_domain}"   
 
     # Slot subdomain parameters
@@ -143,6 +142,13 @@ resource "coder_agent" "main" {
     SLOT_D_SUBDOMAIN    = "${data.coder_parameter.slot_d_subdomain.value}"
     SLOT_E_SUBDOMAIN    = "${data.coder_parameter.slot_e_subdomain.value}"
     
+    # Slot URL parameters
+    SLOT_A_URL          = "https://${data.coder_parameter.slot_a_subdomain.value}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
+    SLOT_B_URL          = "https://${data.coder_parameter.slot_b_subdomain.value}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
+    SLOT_C_URL          = "https://${data.coder_parameter.slot_c_subdomain.value}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
+    SLOT_D_URL          = "https://${data.coder_parameter.slot_d_subdomain.value}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
+    SLOT_E_URL          = "https://${data.coder_parameter.slot_e_subdomain.value}--main--${lower(data.coder_workspace.me.name)}--${local.username}.${local.ixd_domain}/"
+    
     # Database configuration
     POSTGRES_HOST       = "localhost"
     POSTGRES_PORT       = "5432"
@@ -151,7 +157,7 @@ resource "coder_agent" "main" {
     POSTGRES_PASSWORD   = "coder_dev_password"
     DATABASE_URL        = "postgresql://coder:coder_dev_password@localhost:5432/workspace_db"
 
-    DEFAULT_BRANCH      = "main" 
+    WORKSPACE_AGENT     = "main" 
   }
  
  
@@ -184,13 +190,23 @@ resource "coder_script" "service_monitor" {
   script             = replace(file("${path.module}/monitor.sh"), "\r", "")
 }
 
-resource "coder_script" "service_pgadmin" {
-  agent_id           = coder_agent.main.id
-  display_name       = "pgAdmin"
-  run_on_start       = true
-  start_blocks_login = false
-  script             = replace(file("${path.module}/pgadmin.sh"), "\r", "")
-}
+# resource "coder_script" "service_pgadmin" {
+#   agent_id           = coder_agent.main.id
+#   display_name       = "pgAdmin"
+#   run_on_start       = true
+#   start_blocks_login = false
+#   script             = replace(file("${path.module}/pgadmin.sh"), "\r", "")
+# }
+ 
+
+# resource "coder_script" "service_pgweb" {
+#   agent_id           = coder_agent.main.id
+#   display_name       = "PGWeb"
+#   run_on_start       = true
+#   start_blocks_login = false
+#   script             = replace(file("${path.module}/pgweb.sh"), "\r", "")
+# }
+ 
 
 resource "coder_script" "service_placeholders" {
   agent_id           = coder_agent.main.id
@@ -215,7 +231,7 @@ module "vscode-web" {
   version        = "1.0.30"
   agent_id       = coder_agent.main.id
   folder   = "/home/coder"
-  # extensions     = ["github.copilot"]
+  extensions     = ["github.copilot", "dbcode.dbcode", "github.vscode-github-actions", "github.remotehub"]
   settings = {
       "workbench.colorTheme": "Default Dark Modern",
       "workbench.colorCustomizations": {
@@ -248,17 +264,28 @@ module "vscode-web" {
       },
       "remote.SSH.remotePlatform": {
           "*.ixdcoder.com": "linux",
-      }
+      },
+      "github.copilot.enable": {
+          "*": true,
+          "sql": false
+      },
+      "github.gitAuthentication": true,
+      "git.autofetch": true,
+      "git.enableSmartCommit": true,
+      "github.copilot.advanced": {},
+      "workbench.welcomePage.walkthroughs.openOnInstall": false,
+      "workbench.startupEditor": "welcomePage",
+      "accounts.sync": "on",
+      "settingsSync.keybindingsPerPlatform": false
   } 
   accept_license = true
 }
- 
   
 
 resource "coder_app" "admin" {
   agent_id     = coder_agent.main.id
   slug         = "admin"
-  display_name = "Admin Panel"
+  display_name = "Settings"
   url          = "http://localhost:9000"
   icon         = "/icon/widgets.svg"
   subdomain    = true
@@ -270,20 +297,35 @@ resource "coder_app" "admin" {
   }
 }
 
-resource "coder_app" "pgadmin" {
-  agent_id     = coder_agent.main.id
-  slug         = "pgadmin"
-  display_name = "PGAdmin"
-  url          = "http://localhost:5050"
-  icon         = "/icon/database.svg"
-  subdomain    = true
-  share        = "owner"
-  healthcheck {
-    url       = "http://localhost:5050"
-    interval  = 15
-    threshold = 3
-  }
-}
+# resource "coder_app" "pgadmin" {
+#   agent_id     = coder_agent.main.id
+#   slug         = "pgadmin"
+#   display_name = "PGAdmin"
+#   url          = "http://localhost:5050"
+#   icon         = "/icon/database.svg"
+#   subdomain    = true
+#   share        = "owner"
+#   healthcheck {
+#     url       = "http://localhost:5050"
+#     interval  = 15
+#     threshold = 3
+#   }
+# }
+
+# resource "coder_app" "pgweb" {
+#   agent_id     = coder_agent.main.id
+#   slug         = "pgweb"
+#   display_name = "PGWeb"
+#   url          = "http://localhost:8081"
+#   icon         = "/icon/database.svg"
+#   subdomain    = true
+#   share        = "owner"
+#   healthcheck {
+#     url       = "http://localhost:8081"
+#     interval  = 15
+#     threshold = 3
+#   }
+# }
 
 # Individual slot apps
 resource "coder_app" "slot_a" {
@@ -446,7 +488,7 @@ resource "kubernetes_deployment" "main" {
           name              = "dev"
           # image             = "codercom/enterprise-node:ubuntu"
           # image             = "nsitu/node-devenv-2024:latest"
-          image  = "nsitu/coder-pm2-paas:latest"
+          image  = "nsitu/coder-paas:latest"
           # Image Pull Policy: Always / IfNotPresent/ Never
           # see also: https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy 
           image_pull_policy = "Always"

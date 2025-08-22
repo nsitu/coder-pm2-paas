@@ -2,28 +2,22 @@
 # Enhanced slot deployment script - Phase 3 implementation
 set -euo pipefail
 
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
 # Logging function
 log() {
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1" | tee -a "$LOG_FILE"
+    # echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+    echo "$1" | tee -a "$LOG_FILE"
 }
 
 log_error() {
-    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR:${NC} $1" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | tee -a "$LOG_FILE"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING:${NC} $1" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" | tee -a "$LOG_FILE"
 }
 
 log_success() {
-    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS:${NC} $1" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1" | tee -a "$LOG_FILE"
 }
 
 # Validate inputs
@@ -33,7 +27,7 @@ BRANCH="${3:-main}"
 
 # Validate slot name
 if [[ ! "$SLOT" =~ ^[a-e]$ ]]; then
-    echo "❌ Invalid slot name. Must be one of: a, b, c, d, e"
+    echo "Invalid slot name. Must be one of: a, b, c, d, e"
     exit 1
 fi
 
@@ -74,14 +68,50 @@ fi
 # Create deployment lock
 echo $$ > "$DEPLOYMENT_LOCK"
 
+# Function to restart placeholder server for empty slots
+restart_placeholder_server() {
+    local placeholder_script="/home/coder/coder/placeholders.sh"
+    local pid_file="/home/coder/data/pids/placeholder-server.pid"
+    
+    log "Restarting placeholder server..."
+    
+    # Stop existing placeholder server if running
+    if [ -f "$pid_file" ]; then
+        local placeholder_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+        if [ -n "$placeholder_pid" ] && ps -p "$placeholder_pid" > /dev/null 2>&1; then
+            kill -TERM "$placeholder_pid" 2>/dev/null || true
+            sleep 2
+            # Force kill if still running
+            if ps -p "$placeholder_pid" > /dev/null 2>&1; then
+                kill -KILL "$placeholder_pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$pid_file"
+    fi
+    
+    # Restart placeholder server
+    if [ -f "$placeholder_script" ]; then
+        bash "$placeholder_script" &
+        log_success "Placeholder server restarted"
+    else
+        log_warning "Placeholder script not found: $placeholder_script"
+    fi
+}
+
 # Cleanup function
 cleanup() {
     local exit_code=$?
     rm -f "$DEPLOYMENT_LOCK"
+    
+    # Only handle failures here - successful deployments restart placeholder in main flow
     if [ $exit_code -ne 0 ]; then
         log_error "Deployment failed for slot $SLOT"
         update_slot_status "error"
+        
+        # Restart placeholder server so failed slots show placeholder pages
+        restart_placeholder_server
     fi
+    
     exit $exit_code
 }
 
@@ -203,7 +233,8 @@ stop_existing_app() {
     fi
 }
 
-# Function to detect application type and start command
+# Replace the detect_start_command function with this corrected version
+
 detect_start_command() {
     local start_cmd=""
     local main_file=""
@@ -211,8 +242,7 @@ detect_start_command() {
     if [ -f package.json ]; then
         # Check for start script
         if jq -e '.scripts.start' package.json >/dev/null 2>&1; then
-            start_cmd="npm start"
-            log "Detected npm start script"
+            start_cmd="npm start" 
         else
             # Try to find main file
             main_file=$(jq -r '.main // "index.js"' package.json 2>/dev/null || echo "index.js")
@@ -220,8 +250,7 @@ detect_start_command() {
             # Check common entry points
             for candidate in "$main_file" "index.js" "app.js" "server.js" "src/index.js" "src/app.js"; do
                 if [ -f "$candidate" ]; then
-                    start_cmd="node $candidate"
-                    log "Detected Node.js entry point: $candidate"
+                    start_cmd="node $candidate" 
                     break
                 fi
             done
@@ -230,8 +259,7 @@ detect_start_command() {
         # No package.json, check for common files
         for candidate in "index.js" "app.js" "server.js" "main.js"; do
             if [ -f "$candidate" ]; then
-                start_cmd="node $candidate"
-                log "Detected Node.js file: $candidate"
+                start_cmd="node $candidate" 
                 break
             fi
         done
@@ -242,35 +270,41 @@ detect_start_command() {
         return 1
     fi
     
+    # Return just the command, no logging mixed in
     echo "$start_cmd"
 }
 
 # Function to run health check
 health_check() {
-    local max_attempts=10
+    local max_attempts=15
     local attempt=1
     
-    log "Running health check for slot $SLOT on port $PORT..."
+    log "Running health check on port $PORT..."
     
     while [ $attempt -le $max_attempts ]; do
-        if curl -s --max-time 5 "http://localhost:$PORT/health" >/dev/null 2>&1; then
-            log_success "Health check passed (attempt $attempt)"
-            return 0
-        elif curl -s --max-time 5 "http://localhost:$PORT/" >/dev/null 2>&1; then
-            log_success "Application responding on root path (attempt $attempt)"
+        # Check if process is still running
+        if ! ps -p "$APP_PID" > /dev/null 2>&1; then
+            log_error "Application process died (PID: $APP_PID no longer exists)"
+            log_error "Check logs: $DATA_DIR/logs/slot-$SLOT.log"
+            return 1
+        fi
+        
+        # Check if port is being listened on
+        if lsof -i :$PORT > /dev/null 2>&1 || netstat -ln | grep -q ":$PORT "; then
+            log_success "Application is listening on port $PORT (PID: $APP_PID)"
             return 0
         fi
         
-        log "Health check attempt $attempt failed, retrying in 2 seconds..."
+        log "Health check attempt $attempt/$max_attempts: port $PORT not ready, waiting..."
         sleep 2
-        ((attempt++))
+        attempt=$((attempt + 1))
     done
     
-    log_error "Health check failed after $max_attempts attempts"
+    log_error "Health check failed: port $PORT never became available after $max_attempts attempts"
     return 1
 }
+# Replace the start_application function with this improved version
 
-# Function to start application with monitoring
 start_application() {
     local start_cmd="$1"
     local app_log="$DATA_DIR/logs/slot-$SLOT.log"
@@ -288,39 +322,50 @@ start_application() {
         env_string="$env_string $ENV_VARS"
     fi
     
-    # Start application
     log "Environment: $env_string"
     
-    # Use systemd-run for better process management if available
-    if command -v systemd-run >/dev/null 2>&1; then
-        systemd-run --user --scope --property=MemoryMax="$MEMORY_LIMIT" \
-            bash -c "cd '$APP_DIR' && exec env $env_string $start_cmd" \
-            > "$app_log" 2>&1 &
-    else
-        # Fallback to nohup
-        cd "$APP_DIR"
-        nohup env $env_string $start_cmd > "$app_log" 2>&1 &
-    fi
+    # Clear any existing log
+    > "$app_log"
     
-    local app_pid=$!
-    echo "$app_pid" > "$DATA_DIR/locks/slot-$SLOT.pid"
+    # Create PID directory if it doesn't exist
+    mkdir -p "$DATA_DIR/pids"
     
-    log "Application started with PID: $app_pid"
-    sleep 3
+    # Start application using bash with proper process management
+    # Use setsid to create a new session and avoid D-Bus issues
+    setsid bash -c "
+        cd '$APP_DIR'
+        export $env_string
+        exec $start_cmd >> '$app_log' 2>&1
+    " </dev/null >/dev/null 2>&1 &
     
-    # Verify process is still running
-    if ! kill -0 "$app_pid" 2>/dev/null; then
-        log_error "Application process died immediately after start"
-        log_error "Check logs: $app_log"
+    APP_PID=$!
+    echo $APP_PID > "$DATA_DIR/pids/slot-$SLOT.pid"
+    
+    log "Application started with PID: $APP_PID"
+    
+    # Give the application a moment to start
+    sleep 2
+    
+    # Verify the process is still running
+    if ! ps -p "$APP_PID" > /dev/null 2>&1; then
+        log_error "Application process failed to start or died immediately"
+        log_error "Check application logs: $app_log"
+        
+        # Show the last few lines of the log for debugging
+        if [ -f "$app_log" ] && [ -s "$app_log" ]; then
+            log_error "Last few lines from application log:"
+            tail -5 "$app_log" | while read line; do
+                log_error "  $line"
+            done
+        fi
         return 1
     fi
     
-    log_success "Application process is running"
+    return 0
 }
-
 # Main deployment flow
 main() {
-    log "🚀 Starting deployment for slot $SLOT"
+    log "Starting deployment for slot $SLOT"
     log "Repository: $REPO_URL"
     log "Branch: $BRANCH"
     log "Port: $PORT"
@@ -342,7 +387,7 @@ main() {
     backup_current_deployment
     
     # Step 5: Clone or update repository
-    log "📥 Fetching code from repository..."
+    log "Fetching code from repository..."
     if [ -d "$APP_DIR/.git" ]; then
         cd "$APP_DIR"
         log "Updating existing repository..."
@@ -365,7 +410,7 @@ main() {
     
     # Step 6: Install dependencies
     if [ -f package.json ]; then
-        log "📦 Installing dependencies..."
+        log "Installing dependencies..."
         
         # Clean install for better reliability
         if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
@@ -382,7 +427,7 @@ main() {
         
         # Run build script if it exists
         if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
-            log "🔨 Building application..."
+            log "Building application..."
             if npm run build --silent; then
                 log_success "Application built successfully"
             else
@@ -407,12 +452,15 @@ main() {
     # Step 9: Health check
     if health_check; then
         update_slot_status "deployed"
-        log_success "✅ Deployment completed successfully!"
-        log_success "🌐 Application is running on port $PORT"
-        log_success "📋 Logs: $DATA_DIR/logs/slot-$SLOT.log"
+        log_success "Deployment completed successfully!"
+        log_success "Application is running on port $PORT"
+        log_success "Logs: $DATA_DIR/logs/slot-$SLOT.log"
+        
+        # Restart placeholder server to handle remaining empty slots
+        restart_placeholder_server
     else
         update_slot_status "error"
-        log_error "❌ Deployment failed health check"
+        log_error "Deployment failed health check"
         exit 1
     fi
 }

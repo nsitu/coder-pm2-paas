@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Colors for output
-RED='\033[0;31m'
+RED='\033[0;35m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Set defaults for local development
@@ -17,7 +17,7 @@ NC='\033[0m' # No Color
 : ${SLOT_E_SUBDOMAIN:="e"}
 : ${IXD_DOMAIN:="ixdcoder.com"}
 
-echo -e "${BLUE}=== NodeJS App Server Health Check ===${NC}"
+echo -e "${CYAN}=== NodeJS App Server Health Check ===${NC}"
 echo "Timestamp: $(date)"
 echo
 
@@ -76,14 +76,14 @@ for i in {1..5}; do
 done
 
 echo
-echo -e "${BLUE}Process Summary:${NC}"
+echo -e "${CYAN}Process Summary:${NC}"
 echo -e "${YELLOW}Active Processes:${NC}"
 ps aux | grep -E "(postgres|pgadmin4|node.*server.js|python3.*30[0-9][0-9])" | grep -v grep | while read line; do
     echo "  $line"
 done
 
 echo
-echo -e "${BLUE}Port Usage:${NC}"
+echo -e "${CYAN}Port Usage:${NC}"
 if command -v netstat > /dev/null; then
     netstat -tlnp 2>/dev/null | grep -E ":(5432|5050|9000|300[1-5])" | while read line; do
         echo "  $line"
@@ -97,7 +97,7 @@ else
 fi
 
 echo
-echo -e "${BLUE}Available URLs:${NC}"
+echo -e "${CYAN}Available URLs:${NC}"
 echo -e "  ${GREEN}⚙️  Admin Panel:${NC} https://admin--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:9000"
 echo -e "  ${GREEN}🐘 PGAdmin:${NC} https://pgadmin--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:5050"
 echo -e "  ${GREEN}🎰 Slot A:${NC} https://${SLOT_A_SUBDOMAIN:-a}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3001"
@@ -107,14 +107,14 @@ echo -e "  ${GREEN}🎰 Slot D:${NC} https://${SLOT_D_SUBDOMAIN:-d}--main--${WOR
 echo -e "  ${GREEN}🎰 Slot E:${NC} https://${SLOT_E_SUBDOMAIN:-e}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3005"
 
 echo
-echo -e "${BLUE}System Information:${NC}"
+echo -e "${CYAN}System Information:${NC}"
 echo -e "  ${YELLOW}Uptime:${NC} $(uptime)"
 echo -e "  ${YELLOW}Memory Usage:${NC} $(free -h | grep Mem | awk '{print $3 "/" $2}')"
 echo -e "  ${YELLOW}Disk Usage:${NC} $(df -h /home/coder | tail -1 | awk '{print $3 "/" $2 " (" $5 " used)"}')"
 
 if [ -d "/home/coder/data/pids" ]; then
     echo
-    echo -e "${BLUE}PID Files:${NC}"
+    echo -e "${CYAN}PID Files:${NC}"
     ls -la /home/coder/data/pids/ 2>/dev/null | tail -n +2 | while read line; do
         echo "  $line"
     done

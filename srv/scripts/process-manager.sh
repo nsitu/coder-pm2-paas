@@ -18,15 +18,15 @@ fi
 CONFIG_FILE="$BASE/admin/config/slots.json"
 
 # Color codes
-RED='\033[0;31m'
+RED='\033[0;35m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Logging function
 log() {
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
+    echo -e "${CYAN}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
 }
 
 log_error() {

@@ -4,7 +4,7 @@ const fs = require('fs');
 const { spawn, exec } = require('child_process');
 
 const app = express();
-const port = process.env.PORT || 9000;
+const port = 9000;
 
 // Path helper function - works in both local dev and Coder workspace
 function getScriptPath(scriptName) {
@@ -14,6 +14,35 @@ function getScriptPath(scriptName) {
     }
     // Local development - relative to admin directory
     return path.join(__dirname, '..', 'scripts', scriptName);
+}
+
+// Helper function to restart placeholder server
+function restartPlaceholderServer() {
+    return new Promise((resolve, reject) => {
+        // Use the placeholder script from coder directory
+        const placeholderScript = '/home/coder/coder/placeholders.sh';
+        const pidFile = '/home/coder/data/pids/placeholder-server.pid';
+
+        // First, stop existing placeholder server
+        exec(`if [ -f "${pidFile}" ]; then kill -TERM $(cat "${pidFile}") 2>/dev/null || true; rm -f "${pidFile}"; fi`, (error) => {
+            if (error) {
+                console.warn('Warning stopping placeholder server:', error.message);
+            }
+
+            // Wait a moment, then restart
+            setTimeout(() => {
+                exec(`bash "${placeholderScript}"`, (error, stdout, stderr) => {
+                    if (error) {
+                        console.error('Error restarting placeholder server:', error);
+                        reject(error);
+                    } else {
+                        console.log('Placeholder server restarted successfully');
+                        resolve({ stdout, stderr });
+                    }
+                });
+            }, 1000);
+        });
+    });
 }
 
 // Middleware
@@ -129,20 +158,44 @@ app.get('/logs/:slot', (req, res) => {
     res.render('logs', { slotId });
 });
 
+// Helper function to get slot URL from environment variables
+function getSlotUrl(slotId, slot) {
+    // Use pre-built URLs from Terraform environment variables
+    const urlEnvVar = `SLOT_${slotId.toUpperCase()}_URL`;
+    return process.env[urlEnvVar] || `http://localhost:${3000 + (slotId.charCodeAt(0) - 96)}`;
+}
+
 app.get('/api/slots', (req, res) => {
     const config = loadConfig();
-    res.json(config.slots);
+
+    // Enhance each slot with its properly formed URL
+    const enhancedSlots = {};
+    Object.entries(config.slots).forEach(([slotId, slot]) => {
+        enhancedSlots[slotId] = {
+            ...slot,
+            url: getSlotUrl(slotId, slot)
+        };
+    });
+
+    res.json(enhancedSlots);
 });
 
 app.get('/api/slots/:slot', (req, res) => {
     const config = loadConfig();
-    const slot = config.slots[req.params.slot];
+    const slotId = req.params.slot;
+    const slot = config.slots[slotId];
 
     if (!slot) {
         return res.status(404).json({ error: 'Slot not found' });
     }
 
-    res.json(slot);
+    // Include the properly formed URL
+    const enhancedSlot = {
+        ...slot,
+        url: getSlotUrl(slotId, slot)
+    };
+
+    res.json(enhancedSlot);
 });
 
 app.put('/api/slots/:slot', (req, res) => {
@@ -303,7 +356,7 @@ app.post('/api/deploy-all', (req, res) => {
 
 app.get('/api/logs/:slot', (req, res) => {
     const slotId = req.params.slot;
-    const logFile = path.join(__dirname, '../../data/logs/', `slot-${slotId}.log`);
+    const logFile = path.join(__dirname, '../../logs/', `slot-${slotId}.log`);
 
     try {
         if (fs.existsSync(logFile)) {
@@ -454,10 +507,21 @@ app.post('/api/processes/:slot/stop', (req, res) => {
                 saveConfig(config);
             }
 
-            res.json({
-                success: true,
-                message: `Slot ${slotId} stopped successfully`,
-                output: output
+            // Restart placeholder server to reclaim empty slots
+            restartPlaceholderServer().then(() => {
+                res.json({
+                    success: true,
+                    message: `Slot ${slotId} stopped successfully`,
+                    output: output
+                });
+            }).catch((placeholderError) => {
+                console.warn('Warning: Failed to restart placeholder server:', placeholderError);
+                // Still return success for the stop operation
+                res.json({
+                    success: true,
+                    message: `Slot ${slotId} stopped successfully (placeholder restart failed)`,
+                    output: output
+                });
             });
         } else {
             res.status(500).json({
