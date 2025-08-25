@@ -40,7 +40,7 @@
 
         .slot-header {
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
         }
@@ -162,24 +162,18 @@
     </div>
 
     <div class="slots-grid">
-        <%
-            Object.entries(slots).forEach(([slotId,
-            slot])=
-        > { %>
+        <% Object.entries(slots).forEach(([slotId, slot]) => { %>
             <div class="slot-card">
                 <div class="slot-header">
                     <h3 class="slot-title">Slot <%=
                             slotId.toUpperCase()
-                            %
-                        > (<%=
+                            %> (<%=
                                 slot.subdomain
-                                %
-                            >)</h3>
+                                %>)</h3>
                     <span class="status <%= slot.status %>">
                         <%=
                             slot.status.toUpperCase()
-                            %
-                        >
+                            %>
                     </span>
                 </div>
 
@@ -209,12 +203,7 @@
                     <div class="form-group">
                         <label>Environment Variables:</label>
                         <div id="env-<%= slotId %>">
-                            <%
-                                Object.entries(slot.environment
-                                ||
-                                {}).forEach(([key,
-                                value])=
-                            > { %>
+                            <% Object.entries(slot.environment || {}).forEach(([key, value]) => { %>
                                 <div style="display: flex; gap: 5px; margin-bottom: 5px;">
                                     <input
                                         type="text"
@@ -234,10 +223,7 @@
                                         style="width: 30px;"
                                     >×</button>
                                 </div>
-                                <%
-                                    });
-                                    %
-                                >
+                            <% }) %>
                         </div>
                         <button
                             type="button"
@@ -274,10 +260,7 @@
                     >View Logs</button>
                 </div>
             </div>
-            <%
-                });
-                %
-            >
+        <% }) %>
     </div>
 
     <script>

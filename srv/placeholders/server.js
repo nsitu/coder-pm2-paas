@@ -1,94 +1,224 @@
-/* Simplified placeholder server for slots A–E using a single Express app
- * - Listens on ports 3001–3005 in one process
- * - Detects slot by req.socket.localPort
- * - Renders slot page for any path except /healthz
- * - ADMIN_URL from env or derived from Host; fallback http://localhost:9000
- * - SLOT_[A–E]_SUBDOMAIN env vars with defaults a–e
- */
-
-const http = require('http');
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 
-const SLOTS = [
-    { letter: 'A', port: 3001, env: 'SLOT_A_SUBDOMAIN', defaultSub: 'a' },
-    { letter: 'B', port: 3002, env: 'SLOT_B_SUBDOMAIN', defaultSub: 'b' },
-    { letter: 'C', port: 3003, env: 'SLOT_C_SUBDOMAIN', defaultSub: 'c' },
-    { letter: 'D', port: 3004, env: 'SLOT_D_SUBDOMAIN', defaultSub: 'd' },
-    { letter: 'E', port: 3005, env: 'SLOT_E_SUBDOMAIN', defaultSub: 'e' },
-];
+class MultiPortPlaceholderServer {
+    constructor() {
+        this.servers = new Map(); // port -> server instance
+        this.configPath = path.join(__dirname, '../admin/config/slots.json');
+        this.slotsConfig = {};
+        this.runningPorts = new Set();
+    }
 
-const slotByPort = new Map(SLOTS.map((s) => [s.port, s]));
-const subdomains = Object.fromEntries(
-    SLOTS.map((s) => [s.letter, process.env[s.env] || s.defaultSub])
-);
-
-function deriveAdminUrl(req) {
-    if (process.env.ADMIN_URL) return process.env.ADMIN_URL;
-    const host = (req.headers.host || '').split(':')[0];
-    // Derive admin URL for Coder-style multi-subdomain: sub--workspace--user.domain
-    if (host.includes('--')) {
-        const parts = host.split('--');
-        if (parts.length >= 3) {
-            return `https://admin--${parts.slice(1).join('--')}`;
+    // Load slots configuration
+    loadSlotsConfig() {
+        try {
+            const configData = fs.readFileSync(this.configPath, 'utf8');
+            this.slotsConfig = JSON.parse(configData);
+            console.log('📋 Slots configuration loaded');
+        } catch (error) {
+            console.error('❌ Failed to load slots configuration:', error);
+            process.exit(1);
         }
     }
-    return 'http://localhost:9000';
+
+    // Get ports that should show placeholders (empty slots)
+    getPlaceholderPorts() {
+        const placeholderPorts = [];
+
+        if (this.slotsConfig.slots) {
+            Object.entries(this.slotsConfig.slots).forEach(([slotName, config]) => {
+                if (config.status === 'empty' || config.status === 'error') {
+                    placeholderPorts.push({
+                        port: config.port,
+                        slot: slotName,
+                        status: config.status
+                    });
+                }
+            });
+        }
+
+        return placeholderPorts;
+    }
+
+    // Create Express app for a specific slot
+    createSlotApp(slotName, port) {
+        const app = express();
+
+        // Middleware
+        app.use(express.static(path.join(__dirname, 'public')));
+
+        // Main placeholder page
+        app.get('/', (req, res) => {
+            res.sendFile(path.join(__dirname, 'public', 'index.html'));
+        });
+
+        // API endpoint for slot information
+        app.get('/api/slot-info', (req, res) => {
+            const slotUrl = process.env[`SLOT_${slotName.toUpperCase()}_URL`] || `http://localhost:${port}`;
+            const adminUrl = process.env.ADMIN_URL || `https://admin--${process.env.CODER_WORKSPACE_NAME}--${process.env.CODER_USERNAME}.${process.env.CODER_ACCESS_URL?.replace('https://', '') || 'localhost:9000'}`;
+
+            res.json({
+                slot: slotName,
+                port: port,
+                slotUrl: slotUrl,
+                adminUrl: adminUrl,
+                timestamp: new Date().toISOString()
+            });
+        });
+
+        // Health check endpoint
+        app.get('/health', (req, res) => {
+            res.json({
+                status: 'healthy',
+                slot: slotName,
+                port: port,
+                timestamp: new Date().toISOString(),
+                type: 'placeholder'
+            });
+        });
+
+        // Catch-all route
+        app.get('*', (req, res) => {
+            res.redirect('/');
+        });
+
+        return app;
+    }
+
+    // Start server on a specific port
+    startPlaceholderServer(slotName, port) {
+        if (this.servers.has(port)) {
+            console.log(`📍 Placeholder already running on port ${port} for slot ${slotName}`);
+            return;
+        }
+
+        const app = this.createSlotApp(slotName, port);
+
+        const server = app.listen(port, () => {
+            console.log(`📍 Placeholder for slot ${slotName} listening on port ${port}`);
+        });
+
+        server.on('error', (error) => {
+            if (error.code === 'EADDRINUSE') {
+                console.log(`🔄 Port ${port} is in use by deployed app (slot ${slotName})`);
+            } else {
+                console.error(`❌ Error starting placeholder on port ${port}:`, error);
+            }
+        });
+
+        this.servers.set(port, { server, slotName });
+        this.runningPorts.add(port);
+    }
+
+    // Stop server on a specific port
+    stopPlaceholderServer(port) {
+        const serverInfo = this.servers.get(port);
+        if (serverInfo) {
+            serverInfo.server.close(() => {
+                console.log(`🛑 Stopped placeholder for slot ${serverInfo.slotName} on port ${port}`);
+            });
+            this.servers.delete(port);
+            this.runningPorts.delete(port);
+        }
+    }
+
+    // Update running placeholders based on current config
+    updatePlaceholders() {
+        this.loadSlotsConfig();
+        const placeholderPorts = this.getPlaceholderPorts();
+        const neededPorts = new Set(placeholderPorts.map(p => p.port));
+
+        // Stop placeholders that are no longer needed
+        for (const [port, serverInfo] of this.servers.entries()) {
+            if (!neededPorts.has(port)) {
+                console.log(`🔄 Stopping placeholder on port ${port} (slot ${serverInfo.slotName} now has deployed app)`);
+                this.stopPlaceholderServer(port);
+            }
+        }
+
+        // Start placeholders for newly empty slots
+        for (const { port, slot } of placeholderPorts) {
+            if (!this.servers.has(port)) {
+                console.log(`🆕 Starting placeholder on port ${port} for empty slot ${slot}`);
+                this.startPlaceholderServer(slot, port);
+            }
+        }
+    }
+
+    // Start initial placeholders and set up monitoring
+    async start() {
+        console.log('🚀 Starting Multi-Port Placeholder Server');
+
+        this.loadSlotsConfig();
+        this.updatePlaceholders();
+
+        // Watch for configuration changes
+        if (fs.existsSync(this.configPath)) {
+            fs.watchFile(this.configPath, { interval: 1000 }, () => {
+                console.log('📋 Configuration changed, updating placeholders...');
+                this.updatePlaceholders();
+            });
+        }
+
+        // Log memory usage periodically
+        if (process.env.NODE_ENV !== 'production') {
+            setInterval(() => {
+                const memUsage = process.memoryUsage();
+                const runningCount = this.servers.size;
+                console.log(`💾 Memory: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB heap, ${Math.round(memUsage.rss / 1024 / 1024)}MB RSS (${runningCount} placeholders)`);
+            }, 30000);
+        }
+
+        console.log(`📍 Multi-port placeholder server started with ${this.servers.size} placeholders`);
+        console.log(`💾 Initial memory usage: ~${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+    }
+
+    // Graceful shutdown
+    async stop() {
+        console.log('🛑 Shutting down Multi-Port Placeholder Server...');
+
+        // Stop all servers
+        for (const [port] of this.servers.entries()) {
+            this.stopPlaceholderServer(port);
+        }
+
+        // Unwatch config file
+        if (fs.existsSync(this.configPath)) {
+            fs.unwatchFile(this.configPath);
+        }
+
+        console.log('✅ Shutdown complete');
+    }
 }
 
-function slotHtml(slot, adminUrl) {
-    const sub = subdomains[slot.letter];
-    return `<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Slot ${slot.letter} - Empty</title>
-<style>
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;}
-.container{text-align:center;padding:40px;background:rgba(255,255,255,.1);border-radius:20px;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.2);max-width:500px;}
-.slot-icon{font-size:4rem;margin-bottom:20px;opacity:.8;}
-h1{margin:0 0 10px 0;font-size:2.5rem;font-weight:300;}
-.subtitle{opacity:.8;margin-bottom:30px;font-size:1.1rem;}
-.admin-link{display:inline-block;background:rgba(255,255,255,.2);color:white;text-decoration:none;padding:15px 30px;border-radius:50px;border:1px solid rgba(255,255,255,.3);transition:all .3s ease;font-weight:500;}
-.admin-link:hover{background:rgba(255,255,255,.3);transform:translateY(-2px);} 
-.slot-info{margin-top:30px;padding:20px;background:rgba(0,0,0,.2);border-radius:10px;font-size:.9rem;opacity:.9;}
-</style></head>
-<body><div class="container">
-<div class="slot-icon">🎰</div>
-<h1>Slot ${slot.letter}</h1>
-<p class="subtitle">This slot is currently empty</p>
-<a href="${adminUrl}" class="admin-link">🔧 Configure & Deploy</a>
-<div class="slot-info">
-<strong>Port:</strong> ${slot.port}<br>
-<strong>Status:</strong> Available for deployment<br>
-<strong>Subdomain:</strong> ${sub}
-</div>
-</div></body></html>`;
-}
+// Create and start the multi-port server
+const placeholderServer = new MultiPortPlaceholderServer();
 
-const app = express();
-
-// Health for probes
-app.get('/healthz', (_req, res) => res.status(200).send('ok'));
-
-// All other routes → slot placeholder, based on local port
-app.get('*', (req, res) => {
-    const port = req.socket.localPort;
-    const slot = slotByPort.get(port);
-    res.set('Content-Type', 'text/html; charset=utf-8');
-    if (!slot) return res.status(404).send('Unknown slot');
-    res.send(slotHtml(slot, deriveAdminUrl(req)));
+// Graceful shutdown handlers
+process.on('SIGTERM', async () => {
+    await placeholderServer.stop();
+    process.exit(0);
 });
 
-// Start one process listening on all placeholder ports
-SLOTS.forEach(({ port }) => {
-    const server = http.createServer(app);
-    server.on('error', (err) => {
-        if (err && err.code === 'EADDRINUSE') {
-            console.error(`[placeholders] Port ${port} in use; skipping`);
-        } else {
-            console.error(`[placeholders] Error on port ${port}:`, err);
-        }
-    });
-    server.listen(port, '0.0.0.0', () => {
-        console.log(`[placeholders] Listening on ${port}`);
-    });
+process.on('SIGINT', async () => {
+    await placeholderServer.stop();
+    process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    placeholderServer.stop().then(() => process.exit(1));
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    placeholderServer.stop().then(() => process.exit(1));
+});
+
+// Start the server
+placeholderServer.start().catch(error => {
+    console.error('❌ Failed to start placeholder server:', error);
+    process.exit(1);
 });

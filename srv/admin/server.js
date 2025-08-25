@@ -19,28 +19,15 @@ function getScriptPath(scriptName) {
 // Helper function to restart placeholder server
 function restartPlaceholderServer() {
     return new Promise((resolve, reject) => {
-        // Use the placeholder script from coder directory
-        const placeholderScript = '/home/coder/coder/placeholders.sh';
-        const pidFile = '/home/coder/data/pids/placeholder-server.pid';
-
-        // First, stop existing placeholder server
-        exec(`if [ -f "${pidFile}" ]; then kill -TERM $(cat "${pidFile}") 2>/dev/null || true; rm -f "${pidFile}"; fi`, (error) => {
+        // With PM2 individual placeholders, we just ensure all slot placeholders are running
+        exec('pm2 restart slot-a slot-b slot-c slot-d slot-e', (error, stdout, stderr) => {
             if (error) {
-                console.warn('Warning stopping placeholder server:', error.message);
+                console.error('Failed to restart placeholder slots:', error.message);
+                reject(error);
+            } else {
+                console.log('All placeholder slots restarted successfully');
+                resolve(stdout);
             }
-
-            // Wait a moment, then restart
-            setTimeout(() => {
-                exec(`bash "${placeholderScript}"`, (error, stdout, stderr) => {
-                    if (error) {
-                        console.error('Error restarting placeholder server:', error);
-                        reject(error);
-                    } else {
-                        console.log('Placeholder server restarted successfully');
-                        resolve({ stdout, stderr });
-                    }
-                });
-            }, 1000);
         });
     });
 }
@@ -298,35 +285,18 @@ app.post('/api/restart/:slot', (req, res) => {
         return res.status(404).json({ error: 'Slot not found' });
     }
 
-    // Use process manager to restart
-    const processManager = getScriptPath('process-manager.sh');
-    const child = spawn('bash', [processManager, 'restart', slotId], {
-        stdio: 'pipe'
-    });
-
-    let output = '';
-    let error = '';
-
-    child.stdout.on('data', (data) => {
-        output += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-        error += data.toString();
-    });
-
-    child.on('close', (code) => {
-        if (code === 0) {
+    exec(`pm2 restart slot-${slotId}`, (error, stdout, stderr) => {
+        if (error) {
+            res.status(500).json({
+                error: `Failed to restart slot ${slotId}`,
+                details: error.message,
+                stderr: stderr
+            });
+        } else {
             res.json({
                 success: true,
                 message: `Slot ${slotId} restarted successfully`,
-                output: output
-            });
-        } else {
-            res.status(500).json({
-                error: `Failed to restart slot ${slotId}`,
-                output: output,
-                stderr: error
+                output: stdout
             });
         }
     });
@@ -416,32 +386,39 @@ app.post('/webhook', (req, res) => {
 
 // Get detailed process information
 app.get('/api/processes', (req, res) => {
-    const processManager = getScriptPath('process-manager.sh');
-    const child = spawn('bash', [processManager, 'list'], {
-        stdio: 'pipe'
-    });
-
-    let output = '';
-    let error = '';
-
-    child.stdout.on('data', (data) => {
-        output += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-        error += data.toString();
-    });
-
-    child.on('close', (code) => {
-        if (code === 0) {
-            try {
-                const processInfo = JSON.parse(output);
-                res.json(processInfo);
-            } catch (e) {
-                res.status(500).json({ error: 'Failed to parse process information' });
-            }
+    exec('pm2 jlist', (error, stdout, stderr) => {
+        if (error) {
+            res.status(500).json({
+                error: 'Failed to get PM2 processes',
+                details: error.message
+            });
         } else {
-            res.status(500).json({ error: 'Failed to get process information', stderr: error });
+            try {
+                const processes = JSON.parse(stdout);
+
+                // Enhance with additional info
+                const enhancedProcesses = processes.map(proc => ({
+                    name: proc.name,
+                    status: proc.pm2_env?.status,
+                    cpu: proc.monit?.cpu || 0,
+                    memory: proc.monit?.memory || 0,
+                    uptime: proc.pm2_env?.pm_uptime,
+                    restarts: proc.pm2_env?.restart_time || 0,
+                    pid: proc.pid,
+                    type: proc.name.startsWith('slot-') ? 'slot' : 'system'
+                }));
+
+                res.json({
+                    processes: enhancedProcesses,
+                    total: processes.length,
+                    online: processes.filter(p => p.pm2_env?.status === 'online').length
+                });
+            } catch (parseError) {
+                res.status(500).json({
+                    error: 'Failed to parse PM2 output',
+                    details: parseError.message
+                });
+            }
         }
     });
 });
@@ -449,32 +426,42 @@ app.get('/api/processes', (req, res) => {
 // Get detailed information for a specific slot
 app.get('/api/processes/:slot', (req, res) => {
     const slotId = req.params.slot;
-    const processManager = getScriptPath('process-manager.sh');
-    const child = spawn('bash', [processManager, 'info', slotId], {
-        stdio: 'pipe'
-    });
 
-    let output = '';
-    let error = '';
+    exec(`pm2 describe slot-${slotId} --format json`, (error, stdout, stderr) => {
+        if (error) {
+            return res.status(404).json({ error: 'Slot not found or not running' });
+        }
 
-    child.stdout.on('data', (data) => {
-        output += data.toString();
-    });
+        try {
+            const processInfo = JSON.parse(stdout)[0];
+            const config = loadConfig();
+            const slotConfig = config.slots?.[slotId] || {};
 
-    child.stderr.on('data', (data) => {
-        error += data.toString();
-    });
+            // Determine if this is a deployed app or placeholder
+            const isPlaceholder = processInfo.pm2_env?.cwd?.includes('/placeholders');
 
-    child.on('close', (code) => {
-        if (code === 0) {
-            try {
-                const processInfo = JSON.parse(output);
-                res.json(processInfo);
-            } catch (e) {
-                res.status(500).json({ error: 'Failed to parse process information' });
-            }
-        } else {
-            res.status(500).json({ error: 'Failed to get process information', stderr: error });
+            res.json({
+                pm2: {
+                    name: processInfo.name,
+                    status: processInfo.pm2_env?.status,
+                    cpu: processInfo.monit?.cpu || 0,
+                    memory: processInfo.monit?.memory || 0,
+                    uptime: processInfo.pm2_env?.pm_uptime,
+                    restarts: processInfo.pm2_env?.restart_time || 0,
+                    pid: processInfo.pid
+                },
+                slot: {
+                    repository: slotConfig.repository || null,
+                    branch: slotConfig.branch || null,
+                    status: slotConfig.status || 'empty',
+                    lastDeployment: slotConfig.last_deploy || null,
+                    port: processInfo.pm2_env?.env?.PORT
+                },
+                type: isPlaceholder ? 'placeholder' : 'deployed',
+                url: process.env[`SLOT_${slotId.toUpperCase()}_URL`] || `http://localhost:${processInfo.pm2_env?.env?.PORT}`
+            });
+        } catch (parseError) {
+            res.status(500).json({ error: 'Failed to parse PM2 output' });
         }
     });
 });
@@ -482,53 +469,71 @@ app.get('/api/processes/:slot', (req, res) => {
 // Stop a specific slot
 app.post('/api/processes/:slot/stop', (req, res) => {
     const slotId = req.params.slot;
-    const processManager = getScriptPath('process-manager.sh');
-    const child = spawn('bash', [processManager, 'stop', slotId], {
-        stdio: 'pipe'
-    });
 
-    let output = '';
-    let error = '';
-
-    child.stdout.on('data', (data) => {
-        output += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-        error += data.toString();
-    });
-
-    child.on('close', (code) => {
-        if (code === 0) {
+    // Use the stop_slot helper function to restore placeholder
+    exec(`source /home/coder/srv/scripts/pm2-helper.sh && stop_slot ${slotId}`, (error, stdout, stderr) => {
+        if (error) {
+            res.status(500).json({
+                error: `Failed to stop slot ${slotId}`,
+                details: error.message,
+                stderr: stderr
+            });
+        } else {
             // Update slot status
             const config = loadConfig();
             if (config.slots[slotId]) {
-                config.slots[slotId].status = 'stopped';
+                config.slots[slotId].status = 'empty';
                 saveConfig(config);
             }
 
-            // Restart placeholder server to reclaim empty slots
-            restartPlaceholderServer().then(() => {
-                res.json({
-                    success: true,
-                    message: `Slot ${slotId} stopped successfully`,
-                    output: output
-                });
-            }).catch((placeholderError) => {
-                console.warn('Warning: Failed to restart placeholder server:', placeholderError);
-                // Still return success for the stop operation
-                res.json({
-                    success: true,
-                    message: `Slot ${slotId} stopped successfully (placeholder restart failed)`,
-                    output: output
-                });
+            res.json({
+                success: true,
+                message: `Slot ${slotId} stopped and restored to placeholder`,
+                output: stdout
             });
-        } else {
-            res.status(500).json({
-                error: `Failed to stop slot ${slotId}`,
-                output: output,
-                stderr: error
+        }
+    });
+});
+
+// Get enhanced status information for a specific slot  
+app.get('/api/processes/:slot/status', (req, res) => {
+    const slotId = req.params.slot;
+
+    exec(`pm2 describe slot-${slotId} --format json`, (error, stdout, stderr) => {
+        if (error) {
+            return res.status(404).json({ error: 'Slot not found or not running' });
+        }
+
+        try {
+            const processInfo = JSON.parse(stdout)[0];
+            const config = loadConfig();
+            const slotConfig = config.slots?.[slotId] || {};
+
+            // Determine if this is a deployed app or placeholder
+            const isPlaceholder = processInfo.pm2_env?.cwd?.includes('/placeholders');
+
+            res.json({
+                pm2: {
+                    name: processInfo.name,
+                    status: processInfo.pm2_env?.status,
+                    cpu: processInfo.monit?.cpu || 0,
+                    memory: processInfo.monit?.memory || 0,
+                    uptime: processInfo.pm2_env?.pm_uptime,
+                    restarts: processInfo.pm2_env?.restart_time || 0,
+                    pid: processInfo.pid
+                },
+                slot: {
+                    repository: slotConfig.repository || null,
+                    branch: slotConfig.branch || null,
+                    status: slotConfig.status || 'empty',
+                    lastDeployment: slotConfig.last_deploy || null,
+                    port: processInfo.pm2_env?.env?.PORT
+                },
+                type: isPlaceholder ? 'placeholder' : 'deployed',
+                url: process.env[`SLOT_${slotId.toUpperCase()}_URL`] || `http://localhost:${processInfo.pm2_env?.env?.PORT}`
             });
+        } catch (parseError) {
+            res.status(500).json({ error: 'Failed to parse PM2 output' });
         }
     });
 });

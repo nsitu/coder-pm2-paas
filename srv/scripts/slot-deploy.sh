@@ -1,24 +1,6 @@
 #!/usr/bin/env bash
-# Enhanced slot deployment script - Phase 3 implementation
+# Enhanced slot deployment script - Phase 2 PM2 implementation
 set -euo pipefail
-
-# Logging function
-log() {
-    # echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-    echo "$1" | tee -a "$LOG_FILE"
-}
-
-log_error() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | tee -a "$LOG_FILE"
-}
-
-log_warning() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1" | tee -a "$LOG_FILE"
-}
-
-log_success() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1" | tee -a "$LOG_FILE"
-}
 
 # Validate inputs
 SLOT="${1:?slot name required (a-e)}"
@@ -31,20 +13,21 @@ if [[ ! "$SLOT" =~ ^[a-e]$ ]]; then
     exit 1
 fi
 
-# Configuration
-# Determine base directory - works in both local dev and Coder workspace
-if [ -d "/home/coder/srv" ]; then
-  # Running in Coder workspace
-  BASE="/home/coder/srv"
-  DATA_DIR="/home/coder/data"
-else
-  # Running locally
-  BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  DATA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/data"
-fi
+# Configuration 
+BASE="/home/coder/srv"
+DATA_DIR="/home/coder/data"
+
+# Set up log file before sourcing utilities
+LOG_FILE="$DATA_DIR/logs/deploy-$SLOT.log"
+
+# Source shared logging utilities
+source "/home/coder/srv/scripts/logging-utils.sh"
+
+# Source PM2 helper functions
+source "/home/coder/srv/scripts/pm2-helper.sh"
+
 APP_DIR="$BASE/apps/$SLOT"
 CONFIG_FILE="$BASE/admin/config/slots.json"
-LOG_FILE="$DATA_DIR/logs/deploy-$SLOT.log"
 DEPLOYMENT_LOCK="$DATA_DIR/locks/slot-$SLOT.lock"
 
 # Port mapping: a=3001, b=3002, c=3003, d=3004, e=3005
@@ -68,48 +51,20 @@ fi
 # Create deployment lock
 echo $$ > "$DEPLOYMENT_LOCK"
 
-# Function to restart placeholder server for empty slots
-restart_placeholder_server() {
-    local placeholder_script="/home/coder/coder/placeholders.sh"
-    local pid_file="/home/coder/data/pids/placeholder-server.pid"
-    
-    log "Restarting placeholder server..."
-    
-    # Stop existing placeholder server if running
-    if [ -f "$pid_file" ]; then
-        local placeholder_pid=$(cat "$pid_file" 2>/dev/null || echo "")
-        if [ -n "$placeholder_pid" ] && ps -p "$placeholder_pid" > /dev/null 2>&1; then
-            kill -TERM "$placeholder_pid" 2>/dev/null || true
-            sleep 2
-            # Force kill if still running
-            if ps -p "$placeholder_pid" > /dev/null 2>&1; then
-                kill -KILL "$placeholder_pid" 2>/dev/null || true
-            fi
-        fi
-        rm -f "$pid_file"
-    fi
-    
-    # Restart placeholder server
-    if [ -f "$placeholder_script" ]; then
-        bash "$placeholder_script" &
-        log_success "Placeholder server restarted"
-    else
-        log_warning "Placeholder script not found: $placeholder_script"
-    fi
-}
-
 # Cleanup function
 cleanup() {
     local exit_code=$?
     rm -f "$DEPLOYMENT_LOCK"
     
-    # Only handle failures here - successful deployments restart placeholder in main flow
+    # Only handle failures here - successful deployments are handled in main flow
     if [ $exit_code -ne 0 ]; then
-        log_error "Deployment failed for slot $SLOT"
+        log_error "Deployment failed for slot $SLOT, restoring placeholder..."
         update_slot_status "error"
         
-        # Restart placeholder server so failed slots show placeholder pages
-        restart_placeholder_server
+        # Restore placeholder on failure
+        if command -v stop_slot >/dev/null 2>&1; then
+            stop_slot "$SLOT" || log_error "Failed to restore placeholder for slot $SLOT"
+        fi
     fi
     
     exit $exit_code
@@ -205,34 +160,6 @@ validate_repository() {
     fi
 }
 
-# Function to stop existing application
-stop_existing_app() {
-    log "Stopping existing application on port $PORT..."
-    
-    # Find processes using the port
-    local pids=$(lsof -ti :$PORT 2>/dev/null || true)
-    
-    if [ -n "$pids" ]; then
-        log "Found processes on port $PORT: $pids"
-        
-        # Try graceful shutdown first
-        echo "$pids" | xargs kill -TERM 2>/dev/null || true
-        sleep 3
-        
-        # Force kill if still running
-        local remaining_pids=$(lsof -ti :$PORT 2>/dev/null || true)
-        if [ -n "$remaining_pids" ]; then
-            log_warning "Force killing remaining processes: $remaining_pids"
-            echo "$remaining_pids" | xargs kill -KILL 2>/dev/null || true
-            sleep 1
-        fi
-        
-        log_success "Stopped existing application"
-    else
-        log "No existing application found on port $PORT"
-    fi
-}
-
 # Replace the detect_start_command function with this corrected version
 
 detect_start_command() {
@@ -274,94 +201,19 @@ detect_start_command() {
     echo "$start_cmd"
 }
 
-# Function to run health check
-health_check() {
-    local max_attempts=15
-    local attempt=1
-    
-    log "Running health check on port $PORT..."
-    
-    while [ $attempt -le $max_attempts ]; do
-        # Check if process is still running
-        if ! ps -p "$APP_PID" > /dev/null 2>&1; then
-            log_error "Application process died (PID: $APP_PID no longer exists)"
-            log_error "Check logs: $DATA_DIR/logs/slot-$SLOT.log"
-            return 1
-        fi
-        
-        # Check if port is being listened on
-        if lsof -i :$PORT > /dev/null 2>&1 || netstat -ln | grep -q ":$PORT "; then
-            log_success "Application is listening on port $PORT (PID: $APP_PID)"
-            return 0
-        fi
-        
-        log "Health check attempt $attempt/$max_attempts: port $PORT not ready, waiting..."
-        sleep 2
-        attempt=$((attempt + 1))
-    done
-    
-    log_error "Health check failed: port $PORT never became available after $max_attempts attempts"
-    return 1
-}
-# Replace the start_application function with this improved version
-
 start_application() {
     local start_cmd="$1"
-    local app_log="$DATA_DIR/logs/slot-$SLOT.log"
     
-    log "Starting application with command: $start_cmd"
+    log "Starting application with PM2..."
     
-    # Build environment variables
-    local env_string="PORT=$PORT SLOT_NAME=$SLOT NODE_ENV=development"
-    env_string="$env_string DATABASE_URL=postgresql://coder:coder_dev_password@localhost:5432/workspace_db"
-    env_string="$env_string POSTGRES_HOST=localhost POSTGRES_PORT=5432"
-    env_string="$env_string POSTGRES_DB=workspace_db POSTGRES_USER=coder"
-    env_string="$env_string POSTGRES_PASSWORD=coder_dev_password"
-    
-    if [ -n "$ENV_VARS" ]; then
-        env_string="$env_string $ENV_VARS"
-    fi
-    
-    log "Environment: $env_string"
-    
-    # Clear any existing log
-    > "$app_log"
-    
-    # Create PID directory if it doesn't exist
-    mkdir -p "$DATA_DIR/pids"
-    
-    # Start application using bash with proper process management
-    # Use setsid to create a new session and avoid D-Bus issues
-    setsid bash -c "
-        cd '$APP_DIR'
-        export $env_string
-        exec $start_cmd >> '$app_log' 2>&1
-    " </dev/null >/dev/null 2>&1 &
-    
-    APP_PID=$!
-    echo $APP_PID > "$DATA_DIR/pids/slot-$SLOT.pid"
-    
-    log "Application started with PID: $APP_PID"
-    
-    # Give the application a moment to start
-    sleep 2
-    
-    # Verify the process is still running
-    if ! ps -p "$APP_PID" > /dev/null 2>&1; then
-        log_error "Application process failed to start or died immediately"
-        log_error "Check application logs: $app_log"
-        
-        # Show the last few lines of the log for debugging
-        if [ -f "$app_log" ] && [ -s "$app_log" ]; then
-            log_error "Last few lines from application log:"
-            tail -5 "$app_log" | while read line; do
-                log_error "  $line"
-            done
-        fi
+    # Use the shared PM2 startup function
+    if start_pm2_app "$SLOT" "$APP_DIR" "$start_cmd"; then
+        log_success "Application started with PM2"
+        return 0
+    else
+        log_error "Failed to start application with PM2"
         return 1
     fi
-    
-    return 0
 }
 # Main deployment flow
 main() {
@@ -380,8 +232,20 @@ main() {
         exit 1
     fi
     
-    # Step 3: Stop existing application
-    stop_existing_app
+    # Step 3: Stop existing application process (but don't restore placeholder yet)
+    log "Stopping existing application on slot $SLOT..."
+    
+    # Just stop the PM2 process, don't restore placeholder
+    if pm2 describe "slot-$SLOT" >/dev/null 2>&1; then
+        if stop_slot_process "$SLOT"; then
+            log_success "Stopped slot $SLOT process"
+        else
+            log_error "Failed to stop slot $SLOT process"
+            exit 1
+        fi
+    else
+        log "No PM2 process found for slot $SLOT"
+    fi
     
     # Step 4: Backup current deployment
     backup_current_deployment
@@ -450,14 +314,11 @@ main() {
     fi
     
     # Step 9: Health check
-    if health_check; then
+    if health_check "$SLOT"; then
         update_slot_status "deployed"
         log_success "Deployment completed successfully!"
         log_success "Application is running on port $PORT"
         log_success "Logs: $DATA_DIR/logs/slot-$SLOT.log"
-        
-        # Restart placeholder server to handle remaining empty slots
-        restart_placeholder_server
     else
         update_slot_status "error"
         log_error "Deployment failed health check"

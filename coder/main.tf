@@ -49,41 +49,66 @@ variable "namespace" {
 data "coder_parameter" "slot_a_subdomain" {
   name         = "SLOT_A_SUBDOMAIN"
   display_name = "Slot A Subdomain"
+  description  = "Subdomain for slot A (alphanumeric, dashes, max 63 chars)"
   type         = "string"
   mutable      = true
   default      = "a"
+  validation {
+    regex = "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$"
+    error = "Slot A subdomain must contain only alphanumeric characters and dashes, start and end with alphanumeric characters, and be 1-63 characters long."
+  }
 }
 
 data "coder_parameter" "slot_b_subdomain" {
   name         = "SLOT_B_SUBDOMAIN"
   display_name = "Slot B Subdomain"
+  description  = "Subdomain for slot B (alphanumeric, dashes, max 63 chars)"
   type         = "string"
   mutable      = true
   default      = "b"
+  validation {
+    regex = "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$"
+    error = "Slot B subdomain must contain only alphanumeric characters and dashes, start and end with alphanumeric characters, and be 1-63 characters long."
+  }
 }
 
 data "coder_parameter" "slot_c_subdomain" {
   name         = "SLOT_C_SUBDOMAIN"
   display_name = "Slot C Subdomain"
+  description  = "Subdomain for slot C (alphanumeric, dashes, max 63 chars)"
   type         = "string"
   mutable      = true
   default      = "c"
+  validation {
+    regex = "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$"
+    error = "Slot C subdomain must contain only alphanumeric characters and dashes, start and end with alphanumeric characters, and be 1-63 characters long."
+  }
 }
 
 data "coder_parameter" "slot_d_subdomain" {
   name         = "SLOT_D_SUBDOMAIN"
   display_name = "Slot D Subdomain"
+  description  = "Subdomain for slot D (alphanumeric, dashes, max 63 chars)"
   type         = "string"
   mutable      = true
   default      = "d"
+  validation {
+    regex = "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$"
+    error = "Slot D subdomain must contain only alphanumeric characters and dashes, start and end with alphanumeric characters, and be 1-63 characters long."
+  }
 }
 
 data "coder_parameter" "slot_e_subdomain" {
   name         = "SLOT_E_SUBDOMAIN"
   display_name = "Slot E Subdomain"
+  description  = "Subdomain for slot E (alphanumeric, dashes, max 63 chars)"
   type         = "string"
   mutable      = true
   default      = "e"
+  validation {
+    regex = "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$"
+    error = "Slot E subdomain must contain only alphanumeric characters and dashes, start and end with alphanumeric characters, and be 1-63 characters long."
+  }
 }
  
   
@@ -174,6 +199,7 @@ resource "coder_script" "startup" {
 
 # Detached runtime services (non-blocking). These run concurrently on start and
 # each script is responsible for its own readiness gating.
+# Admin service starts PM2 ecosystem (admin server + placeholder server)
 resource "coder_script" "service_admin" {
   agent_id           = coder_agent.main.id
   display_name       = "Admin Service"
@@ -182,13 +208,14 @@ resource "coder_script" "service_admin" {
   script             = replace(file("${path.module}/admin.sh"), "\r", "")
 }
 
-resource "coder_script" "service_monitor" {
-  agent_id           = coder_agent.main.id
-  display_name       = "Process Monitor"
-  run_on_start       = true
-  start_blocks_login = false
-  script             = replace(file("${path.module}/monitor.sh"), "\r", "")
-}
+# PM2 provides built-in process monitoring, so no separate monitor needed
+# resource "coder_script" "service_monitor" {
+#   agent_id           = coder_agent.main.id
+#   display_name       = "Process Monitor"
+#   run_on_start       = true
+#   start_blocks_login = false
+#   script             = replace(file("${path.module}/monitor.sh"), "\r", "")
+# }
 
 # resource "coder_script" "service_pgadmin" {
 #   agent_id           = coder_agent.main.id
@@ -208,13 +235,14 @@ resource "coder_script" "service_monitor" {
 # }
  
 
-resource "coder_script" "service_placeholders" {
-  agent_id           = coder_agent.main.id
-  display_name       = "Slot Placeholders"
-  run_on_start       = true
-  start_blocks_login = false
-  script             = replace(file("${path.module}/placeholders.sh"), "\r", "")
-}
+# The placeholder server is now managed by PM2 via the ecosystem configuration
+# resource "coder_script" "service_placeholders" {
+#   agent_id           = coder_agent.main.id
+#   display_name       = "Slot Placeholders"
+#   run_on_start       = true
+#   start_blocks_login = false
+#   script             = replace(file("${path.module}/placeholders.sh"), "\r", "")
+# }
 
 # NOTE coder modules are frequently updated. 
 # note that version  = "1.0.30" refers to the entire module repo rather than the specific module

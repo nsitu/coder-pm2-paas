@@ -1,89 +1,106 @@
 #!/bin/bash
 
-# Colors for output
-RED='\033[0;35m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# this is a health check utitlity. 
+# it is not called by other scripts but might be useful for debugging
+# you can run it manually from the terminal inside the coder workspace
 
-# Set defaults for local development
-: ${WORKSPACE_NAME:="local"}
-: ${USERNAME:="developer"}
-: ${SLOT_A_SUBDOMAIN:="a"}
-: ${SLOT_B_SUBDOMAIN:="b"}
-: ${SLOT_C_SUBDOMAIN:="c"}
-: ${SLOT_D_SUBDOMAIN:="d"}
-: ${SLOT_E_SUBDOMAIN:="e"}
-: ${IXD_DOMAIN:="ixdcoder.com"}
 
-echo -e "${CYAN}=== NodeJS App Server Health Check ===${NC}"
+
+echo "=== NodeJS App Server Health Check ==="
 echo "Timestamp: $(date)"
 echo
 
-echo -e "${YELLOW}PostgreSQL 17 Status:${NC}"
+echo "PostgreSQL 17 Status:"
 if pgrep -f "postgres.*5432" > /dev/null; then
-    echo -e "  ${GREEN}✅ PostgreSQL 17 is running${NC}"
+    echo "  ✅ PostgreSQL 17 is running"
     # Check if we can connect
     if sudo -u postgres /usr/lib/postgresql/17/bin/psql -lqt > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✅ PostgreSQL 17 is accepting connections${NC}"
+        echo "  ✅ PostgreSQL 17 is accepting connections"
     else
-        echo -e "  ${YELLOW}⚠️  PostgreSQL 17 is running but not accepting connections${NC}"
+        echo "  ⚠️  PostgreSQL 17 is running but not accepting connections"
     fi
 else
-    echo -e "  ${RED}❌ PostgreSQL 17 is not running${NC}"
+    echo "  ❌ PostgreSQL 17 is not running"
 fi
 
-echo -e "${YELLOW}PGAdmin Status:${NC}"
+echo "PGAdmin Status:"
 if pgrep -f "pgadmin4" > /dev/null; then
-    echo -e "  ${GREEN}✅ PGAdmin4 is running${NC}"
+    echo "  ✅ PGAdmin4 is running"
     if curl -s http://localhost:5050 > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✅ PGAdmin4 is responding on port 5050${NC}"
+        echo "  ✅ PGAdmin4 is responding on port 5050"
     else
-        echo -e "  ${YELLOW}⚠️  PGAdmin4 process running but not responding on port 5050${NC}"
+        echo "  ⚠️  PGAdmin4 process running but not responding on port 5050"
     fi
 else
-    echo -e "  ${RED}❌ PGAdmin4 is not running${NC}"
+    echo "  ❌ PGAdmin4 is not running"
 fi
 
-echo -e "${YELLOW}Admin App Status:${NC}"
-if pgrep -f "node.*server.js" > /dev/null; then
-    echo -e "  ${GREEN}✅ Admin application is running${NC}"
-    if curl -s http://localhost:9000 > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✅ Admin application is responding on port 9000${NC}"
+echo "Admin App Status (PM2):"
+if pm2 describe admin-server >/dev/null 2>&1; then
+    pm2_status=$(pm2 describe admin-server | grep -E '^\s*status\s*:' | awk '{print $3}' || echo "unknown")
+    if [ "$pm2_status" = "online" ]; then
+        echo "  ✅ Admin application is running (PM2: $pm2_status)"
+        if curl -s http://localhost:9000 > /dev/null 2>&1; then
+            echo "  ✅ Admin application is responding on port 9000"
+        else
+            echo "  ⚠️  Admin application running but not responding on port 9000"
+        fi
     else
-        echo -e "  ${YELLOW}⚠️  Admin application process running but not responding on port 9000${NC}"
+        echo "  ⚠️  Admin application PM2 status: $pm2_status"
     fi
 else
-    echo -e "  ${RED}❌ Admin application is not running${NC}"
+    echo "  ❌ Admin application is not running (PM2 not found)"
 fi
 
-echo -e "${YELLOW}Slot Status:${NC}"
+echo "Slot Status (PM2):"
 for i in {1..5}; do
     port=$((3000 + i))
     slot_letter=$(echo {a..e} | cut -d' ' -f$i)
+    slot_name="slot-$slot_letter"
     
-    if pgrep -f "python3.*$port" > /dev/null || pgrep -f "node.*$port" > /dev/null; then
-        echo -e "  ${GREEN}✅ Slot $slot_letter (port $port) is active${NC}"
-        if curl -s http://localhost:$port > /dev/null 2>&1; then
-            echo -e "    ${GREEN}✅ Responding to HTTP requests${NC}"
+    # Check PM2 process status
+    if pm2 describe "$slot_name" >/dev/null 2>&1; then
+        pm2_status=$(pm2 describe "$slot_name" | grep -E '^\s*status\s*:' | awk '{print $3}' || echo "unknown")
+        if [ "$pm2_status" = "online" ]; then
+            echo "  ✅ Slot $slot_letter is running (PM2: $pm2_status)"
+            # Test HTTP response
+            if curl -s "http://localhost:$port" > /dev/null 2>&1; then
+                echo "    ✅ HTTP response on port $port"
+            else
+                echo "    ⚠️  No HTTP response on port $port"
+            fi
         else
-            echo -e "    ${YELLOW}⚠️  Process running but not responding${NC}"
+            echo "  ⚠️  Slot $slot_letter PM2 status: $pm2_status"
         fi
     else
-        echo -e "  ${RED}❌ Slot $slot_letter (port $port) is not active${NC}"
+        echo "  ❌ Slot $slot_letter (port $port) is not active"
     fi
 done
 
 echo
-echo -e "${CYAN}Process Summary:${NC}"
-echo -e "${YELLOW}Active Processes:${NC}"
+echo "PM2 Status Summary:"
+if pm2 ping >/dev/null 2>&1; then
+    echo "PM2 Daemon: ✅ Running"
+    echo "PM2 Processes:"
+    pm2 jlist | jq -r '.[] | "  \(.name): \(.pm2_env.status) (PID: \(.pid // "N/A"), Port: \(.pm2_env.PORT // "N/A"))"' 2>/dev/null || {
+        # Fallback if jq is not available
+        pm2 list --no-color | grep -E "^\s*│" | head -n -1 | tail -n +2 | while read line; do
+            echo "  $line"
+        done
+    }
+else
+    echo "PM2 Daemon: ❌ Not running"
+fi
+
+echo
+echo "Process Summary:"
+echo "Active Processes:"
 ps aux | grep -E "(postgres|pgadmin4|node.*server.js|python3.*30[0-9][0-9])" | grep -v grep | while read line; do
     echo "  $line"
 done
 
 echo
-echo -e "${CYAN}Port Usage:${NC}"
+echo "Port Usage:"
 if command -v netstat > /dev/null; then
     netstat -tlnp 2>/dev/null | grep -E ":(5432|5050|9000|300[1-5])" | while read line; do
         echo "  $line"
@@ -93,28 +110,28 @@ elif command -v ss > /dev/null; then
         echo "  $line"
     done
 else
-    echo -e "  ${YELLOW}⚠️  No netstat or ss command available for port checking${NC}"
+    echo "  ⚠️  No netstat or ss command available for port checking"
 fi
 
 echo
-echo -e "${CYAN}Available URLs:${NC}"
-echo -e "  ${GREEN}⚙️  Admin Panel:${NC} https://admin--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:9000"
-echo -e "  ${GREEN}🐘 PGAdmin:${NC} https://pgadmin--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:5050"
-echo -e "  ${GREEN}🎰 Slot A:${NC} https://${SLOT_A_SUBDOMAIN:-a}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3001"
-echo -e "  ${GREEN}🎰 Slot B:${NC} https://${SLOT_B_SUBDOMAIN:-b}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3002"
-echo -e "  ${GREEN}🎰 Slot C:${NC} https://${SLOT_C_SUBDOMAIN:-c}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3003"
-echo -e "  ${GREEN}🎰 Slot D:${NC} https://${SLOT_D_SUBDOMAIN:-d}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3004"
-echo -e "  ${GREEN}🎰 Slot E:${NC} https://${SLOT_E_SUBDOMAIN:-e}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3005"
+echo "Available URLs:"
+echo "  ⚙️  Admin Panel: https://admin--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:9000"
+echo "  🐘 PGAdmin: https://pgadmin--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:5050"
+echo "  🎰 Slot A: https://${SLOT_A_SUBDOMAIN:-a}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3001"
+echo "  🎰 Slot B: https://${SLOT_B_SUBDOMAIN:-b}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3002"
+echo "  🎰 Slot C: https://${SLOT_C_SUBDOMAIN:-c}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3003"
+echo "  🎰 Slot D: https://${SLOT_D_SUBDOMAIN:-d}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3004"
+echo "  🎰 Slot E: https://${SLOT_E_SUBDOMAIN:-e}--main--${WORKSPACE_NAME,,}--${USERNAME}.${IXD_DOMAIN:-ixdcoder.com}/ or http://localhost:3005"
 
 echo
-echo -e "${CYAN}System Information:${NC}"
-echo -e "  ${YELLOW}Uptime:${NC} $(uptime)"
-echo -e "  ${YELLOW}Memory Usage:${NC} $(free -h | grep Mem | awk '{print $3 "/" $2}')"
-echo -e "  ${YELLOW}Disk Usage:${NC} $(df -h /home/coder | tail -1 | awk '{print $3 "/" $2 " (" $5 " used)"}')"
+echo "System Information:"
+echo "  Uptime: $(uptime)"
+echo "  Memory Usage: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
+echo "  Disk Usage: $(df -h /home/coder | tail -1 | awk '{print $3 "/" $2 " (" $5 " used)"}')"
 
 if [ -d "/home/coder/data/pids" ]; then
     echo
-    echo -e "${CYAN}PID Files:${NC}"
+    echo "PID Files:"
     ls -la /home/coder/data/pids/ 2>/dev/null | tail -n +2 | while read line; do
         echo "  $line"
     done

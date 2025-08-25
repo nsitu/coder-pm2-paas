@@ -9,8 +9,7 @@
     >
     <title>Slot Configuration - <%=
             slotId.toUpperCase()
-            %
-        >
+            %>
     </title>
     <link
         rel="stylesheet"
@@ -23,12 +22,10 @@
         <div class="header">
             <h1>🔧 Slot <%=
                     slotId.toUpperCase()
-                    %
-                > Configuration</h1>
+                    %> Configuration</h1>
             <p>Configure deployment settings for slot <%=
                     slotId
-                    %
-                >
+                    %>
             </p>
         </div>
 
@@ -85,16 +82,8 @@
                         class="env-vars"
                         id="env-vars"
                     >
-                        <%
-                            if
-                            (slot.environment
-                            &&
-                            Object.keys(slot.environment).length
-                        > 0) { %>
-                            <%
-                                Object.entries(slot.environment).forEach(([key,
-                                value])=
-                            > { %>
+                        <% if (slot.environment && Object.keys(slot.environment).length > 0) { %>
+                            <% Object.entries(slot.environment).forEach(([key, value]) => { %>
                                 <div class="env-var-row">
                                     <input
                                         type="text"
@@ -114,21 +103,15 @@
                                         onclick="removeEnvVar(this)"
                                     >×</button>
                                 </div>
-                                <%
-                                    })
-                                    %
-                                >
-                                    <%
-                                        }
-                                        %
-                                    >
-                                        <button
-                                            type="button"
-                                            class="btn btn-primary btn-sm w-100 mt-1"
-                                            onclick="addEnvVar()"
-                                        >
-                                            + Add Environment Variable
-                                        </button>
+                            <% }); %>
+                        <% } %>
+                        <button
+                            type="button"
+                            class="btn btn-primary btn-sm w-100 mt-1"
+                            onclick="addEnvVar()"
+                        >
+                            + Add Environment Variable
+                        </button>
                     </div>
                 </div>
 
@@ -150,8 +133,7 @@
                     <span class="status <%= slot.status %>">
                         <%=
                             slot.status.toUpperCase()
-                            %
-                        >
+                            %>
                     </span>
                 </div>
 

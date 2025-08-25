@@ -9,8 +9,7 @@
     >
     <title>Logs - Slot <%=
             slotId.toUpperCase()
-            %
-        >
+            %>
     </title>
     <link
         rel="stylesheet"
@@ -116,13 +115,11 @@
         <div class="header">
             <h1>📋 Logs - Slot <%=
                     slotId.toUpperCase()
-                    %
-                >
+                    %>
             </h1>
             <p>Real-time application logs for slot <%=
                     slotId
-                    %
-                >
+                    %>
             </p>
         </div>
 
@@ -180,8 +177,7 @@
         >
             <div class="log-line log-info">Loading logs for slot <%=
                     slotId
-                    %
-                >...</div>
+                    %>...</div>
         </div>
 
         <div style="margin-top: 20px; text-align: center;">
@@ -189,20 +185,12 @@
                 href="/"
                 class="btn btn-secondary"
             >← Back to Dashboard</a>
-            <%
-                if
-                (slotId)
-                {
-                %
-            >
+            <% if (slotId) { %>
                 <a
                     href="/config/<%= slotId %>"
                     class="btn btn-primary"
                 >⚙️ Configure Slot</a>
-                <%
-                    }
-                    %
-                >
+            <% } %>
         </div>
 
         <div

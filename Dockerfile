@@ -98,6 +98,9 @@ RUN (type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)) \
 # Install pm2
 RUN npm install pm2 -g
 
+# Install express
+RUN npm install express -g
+
 # Install PGAdmin4 
 # Use single virtual environment instead of pipx to reduce overhead
 # RUN python3 -m venv /opt/pgadmin-venv && \
@@ -140,9 +143,26 @@ RUN npm install pm2 -g
 #     && rm pgweb_linux_amd64.zip \
 #     && mv pgweb_linux_amd64 /usr/local/bin/pgweb
 
-# Copy PaaS scripts and make them executable
+# Create a build metadata file with current build information
+RUN echo "# Docker Build Metadata" > /opt/build-info.md && \
+    echo "" >> /opt/build-info.md && \
+    echo "**Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> /opt/build-info.md && \
+    echo "**Build Timestamp:** $(date -u '+%s')" >> /opt/build-info.md && \
+    echo "**Base Image:** ubuntu:noble" >> /opt/build-info.md && \
+    echo "**Architecture:** $(dpkg --print-architecture)" >> /opt/build-info.md && \
+    echo "**Node.js Version:** $(node --version)" >> /opt/build-info.md && \
+    echo "**NPM Version:** $(npm --version)" >> /opt/build-info.md && \
+    echo "**PostgreSQL Version:** $(pg_config --version)" >> /opt/build-info.md && \
+    echo "**PM2 Version:** $(npm list -g pm2 --depth=0 2>/dev/null | grep pm2@ | sed 's/.*pm2@//' | sed 's/ .*//')" >> /opt/build-info.md && \
+    echo "" >> /opt/build-info.md && \
+    echo "This file was generated during the Docker image build process." >> /opt/build-info.md
+
+# Copy PaaS scripts, make them executable
 COPY --chown=coder:coder srv/ /opt/bootstrap/srv/
-RUN chmod +x /opt/bootstrap/srv/scripts/*.sh 
+RUN chmod +x /opt/bootstrap/srv/scripts/*.sh
+
+# Copy PM2 ecosystem configuration
+COPY --chown=coder:coder ecosystem.config.js /opt/bootstrap/ecosystem.config.js
 
 USER coder
 

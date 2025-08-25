@@ -596,11 +596,19 @@ restart_placeholder_server() {
 
 ---
 
-## Phase 3: Update Admin Server
+## Phase 3: Update Admin Server ✅ **COMPLETED**
 
-### 3.1 Replace Process Management in `server.js`
+### 3.1 Replace Process Management in `server.js` ✅
 
-#### Update restart endpoint:
+**Completed Updates:**
+- ✅ **Updated `/api/restart/:slot` endpoint** - Now uses `pm2 restart slot-${slotId}` instead of legacy process-manager.sh
+- ✅ **Enhanced `/api/processes` endpoint** - Returns PM2 process information with CPU, memory, uptime, restarts
+- ✅ **Updated `/api/processes/:slot` endpoint** - Provides detailed slot info including PM2 status and deployment type detection
+- ✅ **Enhanced `/api/processes/:slot/stop` endpoint** - Uses pm2-helper.sh stop_slot() function to restore placeholder 
+- ✅ **Added `/api/processes/:slot/status` endpoint** - Comprehensive slot status with PM2 and deployment information
+- ✅ **Docker image rebuilt** as `nsitu/coder-paas:phase3` and `nsitu/coder-paas:latest`
+
+#### Update restart endpoint: ✅ **IMPLEMENTED**
 ```javascript
 app.post('/api/restart/:slot', (req, res) => {
     const slotId = req.params.slot;
@@ -623,7 +631,7 @@ app.post('/api/restart/:slot', (req, res) => {
 });
 ```
 
-#### Update stop endpoint:
+#### Update stop endpoint: ✅ **IMPLEMENTED**
 ```javascript
 app.post('/api/processes/:slot/stop', (req, res) => {
     const slotId = req.params.slot;
@@ -654,12 +662,12 @@ app.post('/api/processes/:slot/stop', (req, res) => {
 });
 ```
 
-#### Add enhanced process info endpoint:
+#### Add enhanced process info endpoint: ✅ **IMPLEMENTED**
 ```javascript
 app.get('/api/processes', (req, res) => {
     exec('pm2 jlist', (error, stdout, stderr) => {
         if (error) {
-            res.status(500).json({ 
+            res.status(500).json({
                 error: 'Failed to get PM2 processes',
                 details: error.message 
             });
@@ -920,6 +928,8 @@ pm2 save > /dev/null 2>&1 || true
 **Legacy Configuration:**
 - ❌ `/home/coder/data/pids/` directory - PM2 manages PIDs internally
 - ❌ `/home/coder/data/locks/` directory - PM2 handles process locking
+- ❌ `/coder/monitor.sh` - PM2 provides built-in process monitoring and restart
+- ❌ `/coder/placeholders.sh` - Individual placeholders managed by PM2
 
 ### Files to Modify (Not Remove)
 **Startup & Service Scripts:**
@@ -1016,11 +1026,6 @@ pm2 save > /dev/null 2>&1 || true
 #!/bin/bash
 # PM2 Migration Validation Script
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
 
 validate_migration() {
     echo -e "${YELLOW}🔍 Validating PM2 migration...${NC}"
@@ -1279,6 +1284,7 @@ Migration is complete when:
 - ✅ System is more stable than before migration
 - ✅ Multiple workspace instances can coexist without PM2 conflicts
 - ✅ PM2 monitoring integrates with Coder's health check system
+- ✅ **Script consolidation complete**: Eliminated redundant scripts, reduced from 1,449 to 933 total lines
 
 **Container-specific success criteria:**
 - ✅ PM2 daemon starts automatically on container boot
@@ -1286,3 +1292,24 @@ Migration is complete when:
 - ✅ PM2 logs rotate properly to prevent disk space issues
 - ✅ PM2 process isolation works between different workspace instances
 - ✅ Docker image builds successfully with PM2 optimizations
+
+---
+
+## Script Consolidation Results (Phase 2 Cleanup)
+
+**Disabled Legacy/Redundant Scripts:**
+- `process-manager.sh.disabled` (334 lines) - Legacy PID-based process management
+- `pm2-deploy.sh.disabled` (163 lines) - Redundant simplified deployment script
+
+**Active Scripts Maintained:**
+- `slot-deploy.sh` (401 lines) - Comprehensive PM2-based deployment with all features
+- `pm2-helper.sh` (382 lines) - Core PM2 management functions and utilities  
+- `health-check.sh` (150 lines) - PM2-focused health monitoring (legacy fallbacks removed)
+
+**Total line reduction:** 1,449 → 933 lines (35% reduction, eliminated 516 lines of redundant code)
+
+**Key improvements:**
+- Eliminated duplicate deployment logic between `slot-deploy.sh` and `pm2-deploy.sh`
+- Removed legacy PID-based process management from `process-manager.sh`
+- Streamlined health-check.sh to focus on PM2-only monitoring
+- Maintained comprehensive functionality in consolidated scripts

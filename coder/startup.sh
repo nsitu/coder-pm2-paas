@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-#  set -x (tracing: print each command before executing)
 
 # ensure we report the full context in case of errors
 trap 'src="${BASH_SOURCE[0]:-?}"; line="${LINENO:-?}"; cmd="${BASH_COMMAND:-?}"; echo "ERROR at ${src}:${line}: ${cmd}" >&2' ERR
@@ -16,26 +15,29 @@ if [ -f /home/coder/.startup_complete ]; then
   BOOT_MODE="rehydrate"
 fi
 
-# Colors for output
-RED='\033[0;35m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-echo -e "${CYAN} Starting Workspace...${NC}"
+echo "Starting Workspace..."
 
 # Shell cosmetics for better UX
 echo 'export PS1="\[\033[01;34m\]\w\[\033[00m\] $ "' >> ~/.bashrc || true
 
 # System snapshot for debugging
-echo -e "${CYAN}=== System Snapshot $(date '+%a %b %d %Y, %I:%M%p') ========${NC}"
+echo "=== System Snapshot $(date '+%a %b %d %Y, %I:%M%p') ========"
 coder stat || true
-echo -e "${CYAN}=========================================${NC}"
+
+# Docker image build information
+echo ""
+echo "🐳 Docker Image Build Information:"
+if [ -f "/home/coder/build-info.md" ]; then
+  cat /home/coder/build-info.md | sed 's/^/  /'
+else
+  echo "  Build metadata not available"
+fi
+
+echo "========================================="
 
 # Create necessary directories, bootstrap, SSH, deps (first boot only)
 if [ "$BOOT_MODE" = "first" ]; then
-  echo -e "${YELLOW}📁 Creating directory structure...${NC}"
+  echo "📁 Creating directory structure..."
   # Create data directories
   sudo mkdir -p \
     /home/coder/data/postgres \
@@ -51,15 +53,57 @@ if [ "$BOOT_MODE" = "first" ]; then
     /home/coder/srv/admin 
   sudo chown -R coder:coder /home/coder/srv  
   
-  # Note: there may be some duplication here since 
-  # the bootstrap files below will also create some directories in /home/coder/srv
-  echo -e "${YELLOW}📋 Setting up bootstrap files...${NC}"
-  if [ ! -f "/home/coder/srv/admin/server.js" ] && [ -d "/opt/bootstrap/srv" ]; then
-    cp -r /opt/bootstrap/srv/* /home/coder/srv/ 2>/dev/null || true
+  # Bootstrap files setup
+  echo "📋 Setting up bootstrap files..."
+  if [ -d "/opt/bootstrap" ]; then
+    # Copy srv files if they don't exist
+    if [ ! -f "/home/coder/srv/admin/server.js" ] && [ -d "/opt/bootstrap/srv" ]; then
+      cp -r /opt/bootstrap/srv/* /home/coder/srv/ 2>/dev/null || true
+      chmod +x /home/coder/srv/scripts/*.sh 2>/dev/null || true
+    fi
+    # Copy build metadata to user home directory
+    if [ -f "/opt/build-info.md" ]; then
+      cp /opt/build-info.md /home/coder/build-info.md 2>/dev/null || true
+      echo "  ✅ Build metadata copied to /home/coder/build-info.md"
+    fi
   fi
-  chmod +x /home/coder/srv/scripts/*.sh 2>/dev/null || true
 
-  echo -e "${YELLOW}🔑 Setting up SSH access...${NC}"
+  echo "📋 Setting up PM2 ecosystem configuration..."
+  # Create PM2 logs directory
+  mkdir -p /home/coder/data/logs/pm2
+  
+  # Copy static ecosystem configuration from bootstrap
+  if [ -f "/opt/bootstrap/ecosystem.config.js" ]; then
+    cp /opt/bootstrap/ecosystem.config.js /home/coder/ecosystem.config.js
+    echo "  ✅ PM2 ecosystem configuration copied from bootstrap"
+  else
+    echo "  ❌ PM2 ecosystem configuration not found in bootstrap"
+    exit 1
+  fi
+  
+  echo "🚀 Starting PM2 ecosystem processes..."
+  # Clear any existing PM2 processes to ensure clean state
+  pm2 delete all >/dev/null 2>&1 || true
+  
+  # Ensure PM2 daemon is ready
+  pm2 ping >/dev/null 2>&1 || true
+
+  # Start ecosystem processes (admin server and placeholder server)
+  if pm2 start ecosystem.config.js; then
+    pm2 save
+    echo "  ✅ PM2 ecosystem started successfully"
+    # Show PM2 status
+    pm2 list
+  else
+    echo "  ❌ Failed to start PM2 ecosystem"
+    # Show logs for debugging
+    pm2 logs --lines 10
+  fi
+
+  # Note: Multi-Port Placeholder Server is now managed by PM2 ecosystem above
+  echo "📍 Multi-Port Placeholder Server started via PM2 ecosystem"
+
+  echo "🔑 Setting up SSH access..."
   # ensure ~/.ssh exists in the mounted home and seed github.com known_hosts
   mkdir -p ~/.ssh && chmod 700 ~/.ssh || true
   if [ ! -f ~/.ssh/known_hosts ] || ! grep -q 'github.com' ~/.ssh/known_hosts 2>/dev/null; then
@@ -70,14 +114,14 @@ if [ "$BOOT_MODE" = "first" ]; then
   if [ -n "${GIT_SSH_PRIVATE_KEY:-}" ]; then
     printf '%s\n' "$GIT_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
     chmod 600 ~/.ssh/id_ed25519
-    echo -e "${GREEN}  ✅ SSH private key configured${NC}"
+    echo "  ✅ SSH private key configured"
   fi
   # TODO: Seed other useful  known_hosts (e.g. bender.sheridanc.on.ca)
 
   # PostgreSQL initdb on first boot only (startup is handled below for both modes)
-  echo -e "${CYAN}🐘 Initializing PostgreSQL 17...${NC}"
+  echo "🐘 Initializing PostgreSQL 17..."
   if [ ! -f "/home/coder/data/postgres/PG_VERSION" ]; then
-    echo -e "${YELLOW}  📊 Creating new PostgreSQL database cluster...${NC}"
+    echo "  📊 Creating new PostgreSQL database cluster..."
     sudo install -d -m 0750 -o coder -g coder /home/coder/data/postgres
     /usr/lib/postgresql/17/bin/initdb -D /home/coder/data/postgres
     # Ensure socket in /tmp and listen on loopback
@@ -89,15 +133,14 @@ if [ "$BOOT_MODE" = "first" ]; then
     if ! grep -q '127.0.0.1/32' /home/coder/data/postgres/pg_hba.conf; then
       echo "host all all 127.0.0.1/32 scram-sha-256" >> /home/coder/data/postgres/pg_hba.conf
     fi
-    echo -e "${GREEN}  ✅ PostgreSQL 17 initialized${NC}"
+    echo "  ✅ PostgreSQL 17 initialized"
   else
-    echo -e "${GREEN}  ✅ PostgreSQL 17 already initialized${NC}"
+    echo "  ✅ PostgreSQL 17 already initialized"
   fi
 fi
 
 # Ensure PostgreSQL running (both modes), then DB/user ensure on first boot
-echo -e "${YELLOW}  🚀 Starting PostgreSQL 17 server...${NC}"
-
+echo "  🚀 Starting PostgreSQL 17 server..."
 
 PGDATA="/home/coder/data/postgres"
 PGPORT="${PGPORT:-5432}"
@@ -124,22 +167,22 @@ else
   start_rc=$?
   set -e
   if [ $start_rc -ne 0 ]; then
-    echo -e "${YELLOW}  ⚠️  pg_ctl start failed (rc=$start_rc). Tail of log:${NC}"
+    echo "  ⚠️  pg_ctl start failed (rc=$start_rc). Tail of log:"
     tail -n 100 "/home/coder/logs/postgres.log" || true
   fi
 fi
 
-echo -e "${YELLOW}  ⏳ Waiting for PostgreSQL to be ready...${NC}"
+echo "  ⏳ Waiting for PostgreSQL to be ready..."
 for i in $(seq 1 30); do
   if /usr/lib/postgresql/17/bin/pg_isready -h "$PGREADY_HOST" -p "$PGPORT" >/dev/null 2>&1; then
-    echo -e "${GREEN}  ✅ PostgreSQL 17 is ready on $PGREADY_HOST:$PGPORT${NC}"
+    echo "  ✅ PostgreSQL 17 is ready on $PGREADY_HOST:$PGPORT"
     break
   fi
   sleep 1
 done
 
 if [ "$BOOT_MODE" = "first" ]; then
-  echo -e "${YELLOW}  👤 Setting up workspace database...${NC}"
+  echo "  👤 Setting up workspace database..."
   # Use TCP and connect to the default postgres DB (not "coder")
   PSQL="/usr/lib/postgresql/17/bin/psql -h $PGREADY_HOST -p $PGPORT -d postgres -U coder"
   $PSQL -tc "SELECT 1 FROM pg_roles WHERE rolname='coder';" | grep -q 1 || \
@@ -155,15 +198,15 @@ if [ "$BOOT_MODE" = "first" ]; then
   $PSQL_WS -c "CREATE TABLE IF NOT EXISTS test ( id SERIAL PRIMARY KEY,  datetime TIMESTAMPTZ NOT NULL DEFAULT now(), status TEXT NOT NULL );" || true
   # Insert a success row with current timestamp
   $PSQL_WS -c "INSERT INTO test (datetime, status) VALUES (CURRENT_TIMESTAMP, 'success');" || true
-  echo -e "${GREEN}  ✅ Workspace database configured${NC}"
+  echo "  ✅ Workspace database configured"
 fi
 
 # Mark completion on first boot
 if [ "$BOOT_MODE" = "first" ]; then
   touch /home/coder/.startup_complete
-  echo -e "${GREEN}✅ Startup complete!${NC}"
+  echo "✅ Startup complete!"
 else
-  echo -e "${GREEN}🔁 Quick rehydrate mode${NC}"
+  echo "🔁 Quick rehydrate mode"
 fi
 
 exit 0
