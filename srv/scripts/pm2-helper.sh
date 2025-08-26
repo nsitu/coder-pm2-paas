@@ -52,7 +52,7 @@ start_pm2_app() {
     fi
     
     # Run the Node.js script with proper arguments
-    if ! node "$script_path" "$slot" "$app_dir" "$start_cmd" "$port" "$config_file" >> "/home/coder/data/logs/ecosystem-updates.log" 2>&1; then
+    if ! node "$script_path" "$slot" "$app_dir" "$start_cmd" "$port" "$config_file" >> "/home/coder/logs/ecosystem-updates.log" 2>&1; then
         log_error "Failed to add slot to ecosystem configuration"
         return 1
     fi

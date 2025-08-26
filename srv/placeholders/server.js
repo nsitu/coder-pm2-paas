@@ -45,26 +45,20 @@ class MultiPortPlaceholderServer {
     createSlotApp(slotName, port) {
         const app = express();
 
-        // Middleware
-        app.use(express.static(path.join(__dirname, 'public')));
+        // Serve slot-specific static assets generated under /srv/placeholders/slots/<slot>
+        const slotStaticDir = path.join(__dirname, 'slots', slotName);
 
-        // Main placeholder page
+        // Static middleware for this slot
+        app.use(express.static(slotStaticDir));
+
+        // Main placeholder page: serve slot-specific index.html if present
         app.get('/', (req, res) => {
-            res.sendFile(path.join(__dirname, 'public', 'index.html'));
-        });
-
-        // API endpoint for slot information
-        app.get('/api/slot-info', (req, res) => {
-            const slotUrl = process.env[`SLOT_${slotName.toUpperCase()}_URL`] || `http://localhost:${port}`;
-            const adminUrl = process.env.ADMIN_URL || `https://admin--${process.env.CODER_WORKSPACE_NAME}--${process.env.CODER_USERNAME}.${process.env.CODER_ACCESS_URL?.replace('https://', '') || 'localhost:9000'}`;
-
-            res.json({
-                slot: slotName,
-                port: port,
-                slotUrl: slotUrl,
-                adminUrl: adminUrl,
-                timestamp: new Date().toISOString()
-            });
+            const slotIndex = path.join(slotStaticDir, 'index.html');
+            if (fs.existsSync(slotIndex)) {
+                res.sendFile(slotIndex);
+            } else {
+                res.status(404).send(`Placeholder assets not found for slot "${slotName}" at ${slotStaticDir}`);
+            }
         });
 
         // Health check endpoint
@@ -78,9 +72,14 @@ class MultiPortPlaceholderServer {
             });
         });
 
-        // Catch-all route
+        // Catch-all route: serve the same index for simple routing support
         app.get('*', (req, res) => {
-            res.redirect('/');
+            const slotIndex = path.join(slotStaticDir, 'index.html');
+            if (fs.existsSync(slotIndex)) {
+                res.sendFile(slotIndex);
+            } else {
+                res.status(404).send(`Placeholder assets not found for slot "${slotName}" at ${slotStaticDir}`);
+            }
         });
 
         return app;

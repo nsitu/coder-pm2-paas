@@ -22,17 +22,7 @@ echo 'export PS1="\[\033[01;34m\]\w\[\033[00m\] $ "' >> ~/.bashrc || true
 
 # System snapshot for debugging
 echo "=== System Snapshot $(date '+%a %b %d %Y, %I:%M%p') ========"
-coder stat || true
-
-# Docker image build information
-echo ""
-echo "🐳 Docker Image Build Information:"
-if [ -f "/home/coder/build-info.md" ]; then
-  cat /home/coder/build-info.md | sed 's/^/  /'
-else
-  echo "  Build metadata not available"
-fi
-
+coder stat || true 
 echo "========================================="
 
 # Create necessary directories, bootstrap, SSH, deps (first boot only)
@@ -41,17 +31,16 @@ if [ "$BOOT_MODE" = "first" ]; then
   # Create data directories
   sudo mkdir -p \
     /home/coder/data/postgres \
-    /home/coder/data/pgadmin \
     /home/coder/data/backups \
     /home/coder/logs \
     /home/coder/data/pids 
-  sudo chown -R coder:coder /home/coder/data
+  sudo chown -R coder:coder /home/coder/data /home/coder/logs
   # Create srv directories 
   sudo mkdir -p \
     /home/coder/srv/apps/{a,b,c,d,e} \
     /home/coder/srv/scripts \
     /home/coder/srv/admin 
-  sudo chown -R coder:coder /home/coder/srv  
+  sudo chown -R coder:coder /home/coder/srv
   
   # Bootstrap files setup
   echo "📋 Setting up bootstrap files..."
@@ -70,7 +59,7 @@ if [ "$BOOT_MODE" = "first" ]; then
 
   echo "📋 Setting up PM2 ecosystem configuration..."
   # Create PM2 logs directory
-  mkdir -p /home/coder/data/logs/pm2
+  mkdir -p /home/coder/logs/pm2
   
   # Copy static ecosystem configuration from bootstrap
   if [ -f "/opt/bootstrap/ecosystem.config.js" ]; then
@@ -80,28 +69,15 @@ if [ "$BOOT_MODE" = "first" ]; then
     echo "  ❌ PM2 ecosystem configuration not found in bootstrap"
     exit 1
   fi
-  
-  echo "🚀 Starting PM2 ecosystem processes..."
-  # Clear any existing PM2 processes to ensure clean state
-  pm2 delete all >/dev/null 2>&1 || true
-  
-  # Ensure PM2 daemon is ready
-  pm2 ping >/dev/null 2>&1 || true
 
-  # Start ecosystem processes (admin server and placeholder server)
-  if pm2 start ecosystem.config.js; then
-    pm2 save
-    echo "  ✅ PM2 ecosystem started successfully"
-    # Show PM2 status
-    pm2 list
-  else
-    echo "  ❌ Failed to start PM2 ecosystem"
-    # Show logs for debugging
-    pm2 logs --lines 10
-  fi
-
-  # Note: Multi-Port Placeholder Server is now managed by PM2 ecosystem above
-  echo "📍 Multi-Port Placeholder Server started via PM2 ecosystem"
+# Docker image build information
+echo ""
+echo "🐳 Docker Image Build Information:"
+if [ -f "/home/coder/build-info.md" ]; then
+  cat /home/coder/build-info.md | sed 's/^/  /'
+else
+  echo "  Build metadata not available"
+fi
 
   echo "🔑 Setting up SSH access..."
   # ensure ~/.ssh exists in the mounted home and seed github.com known_hosts
@@ -139,8 +115,28 @@ if [ "$BOOT_MODE" = "first" ]; then
   fi
 fi
 
+# Generate static placeholders early (both first boot and rehydrate)
+if command -v node >/dev/null 2>&1 && [ -f "/home/coder/srv/scripts/generate-placeholders.js" ]; then
+  echo "⚙️  Generating static placeholders for slots..."
+  set +e
+  node /home/coder/srv/scripts/generate-placeholders.js generate
+  gen_rc=$?
+  set -e
+  if [ $gen_rc -ne 0 ]; then
+    echo "  ⚠️  Placeholder generation reported errors (rc=$gen_rc). Continuing startup."
+  else
+    echo "  ✅ Placeholders generated at /home/coder/srv/placeholders/slots"
+  fi
+else
+  echo "  ⚠️  Skipping placeholder generation (node or script not available)"
+fi
+
 # Ensure PostgreSQL running (both modes), then DB/user ensure on first boot
 echo "  🚀 Starting PostgreSQL 17 server..."
+
+# Ensure logs directory exists and is writable
+mkdir -p /home/coder/logs
+chown coder:coder /home/coder/logs
 
 PGDATA="/home/coder/data/postgres"
 PGPORT="${PGPORT:-5432}"
@@ -174,7 +170,7 @@ fi
 
 echo "  ⏳ Waiting for PostgreSQL to be ready..."
 for i in $(seq 1 30); do
-  if /usr/lib/postgresql/17/bin/pg_isready -h "$PGREADY_HOST" -p "$PGPORT" >/dev/null 2>&1; then
+  if /usr/lib/postgresql/17/bin/pg_isready -h "$PGREADY_HOST" -p "$PGPORT" -d postgres >/dev/null 2>&1; then
     echo "  ✅ PostgreSQL 17 is ready on $PGREADY_HOST:$PGPORT"
     break
   fi
@@ -199,6 +195,38 @@ if [ "$BOOT_MODE" = "first" ]; then
   # Insert a success row with current timestamp
   $PSQL_WS -c "INSERT INTO test (datetime, status) VALUES (CURRENT_TIMESTAMP, 'success');" || true
   echo "  ✅ Workspace database configured"
+fi
+
+# Start PM2 ecosystem (both first boot and rehydrate modes)
+echo "🚀 Starting PM2 services..."
+mkdir -p /home/coder/logs /home/coder/logs/pm2
+chown -R coder:coder /home/coder/logs /home/coder/logs
+
+# Ensure PM2 daemon is running
+pm2 ping >/dev/null 2>&1 || {
+  # Start PM2 daemon if not running
+  pm2 status >/dev/null 2>&1
+  sleep 1
+}
+
+# Start PM2 ecosystem if not already running
+if [ -f "/home/coder/ecosystem.config.js" ]; then
+  # Check if admin-server is already running
+  if ! pm2 describe admin-server >/dev/null 2>&1; then
+    # Start all processes from ecosystem config
+    if pm2 start /home/coder/ecosystem.config.js; then
+      pm2 save >/dev/null 2>&1
+      echo "  ✅ PM2 ecosystem services started"
+      # Show PM2 status for debugging
+      pm2 list
+    else
+      echo "  ❌ Failed to start PM2 ecosystem"
+      pm2 logs --lines 5
+    fi
+  else
+    echo "  ✅ PM2 services already running"
+    pm2 list
+  fi
 fi
 
 # Mark completion on first boot

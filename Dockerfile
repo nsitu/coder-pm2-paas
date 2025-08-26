@@ -101,48 +101,6 @@ RUN npm install pm2 -g
 # Install express
 RUN npm install express -g
 
-# Install PGAdmin4 
-# Use single virtual environment instead of pipx to reduce overhead
-# RUN python3 -m venv /opt/pgadmin-venv && \
-#     /opt/pgadmin-venv/bin/pip install --no-cache-dir pgadmin4 && \
-#     # Create symlink for easy access (safer than adding entire venv to PATH)
-#     ln -s /opt/pgadmin-venv/bin/pgadmin4 /usr/local/bin/pgadmin4 && \
-#     # Create pgadmin directories with proper permissions for coder user
-#     mkdir -p /var/lib/pgadmin /var/log/pgadmin && \
-#     # Give coder user access to pgadmin directories
-#     chown -R coder:coder /var/lib/pgadmin /var/log/pgadmin && \
-#     # Clean up all caches
-#     rm -rf /root/.cache/pip /root/.npm /tmp/*
-
-# Configure PGAdmin environment variables (image-level defaults)
-# ENV 
-#     PGADMIN_SETUP_EMAIL=ixd@sheridancollege.ca \
-#     PGADMIN_SETUP_PASSWORD=admin 
-
-# ENV PGADMIN_DEFAULT_EMAIL=ixd@sheridancollege.ca \
-#     PGADMIN_DEFAULT_PASSWORD=admin \
-#     PGADMIN_LISTEN_ADDRESS=0.0.0.0 \
-#     PGADMIN_LISTEN_PORT=5050 \
-#     PGADMIN_CONFIG_DESKTOP_USER=ixd@sheridancollege.ca \
-#     PGADMIN_CONFIG_SERVER_MODE=False \
-#     PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False \
-#     PGADMIN_CONFIG_CONSOLE_LOG_LEVEL=10 \
-#     # NOTE: the following paths will be assumed by scripts
-#     PGADMIN_CONFIG_SQLITE_PATH=/home/coder/data/pgadmin.db \
-#     PGADMIN_CONFIG_LOG_FILE=/home/coder/logs/pgadmin.log \
-#     PGADMIN_CONFIG_SESSION_DB_PATH=/home/coder/data/pgadmin/sessions \
-#     PGADMIN_CONFIG_STORAGE_DIR=/home/coder/data/pgadmin/storage
-
-# Install PGWeb (PostgreSQL web interface)
-# RUN curl -s https://api.github.com/repos/sosedoff/pgweb/releases/latest \
-#     | grep linux_amd64.zip \
-#     | grep download \
-#     | cut -d '"' -f 4 \
-#     | wget -qi - \
-#     && unzip pgweb_linux_amd64.zip \
-#     && rm pgweb_linux_amd64.zip \
-#     && mv pgweb_linux_amd64 /usr/local/bin/pgweb
-
 # Create a build metadata file with current build information
 RUN echo "# Docker Build Metadata" > /opt/build-info.md && \
     echo "" >> /opt/build-info.md && \

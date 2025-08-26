@@ -11,9 +11,9 @@ module.exports = {
                 NODE_ENV: 'development',
                 PORT: '9000'
             },
-            error_file: '/home/coder/data/logs/pm2/admin-error.log',
-            out_file: '/home/coder/data/logs/pm2/admin-out.log',
-            log_file: '/home/coder/data/logs/pm2/admin.log',
+            error_file: '/home/coder/logs/pm2/admin-error.log',
+            out_file: '/home/coder/logs/pm2/admin-out.log',
+            log_file: '/home/coder/logs/pm2/admin.log',
             time: true
         },
         {
@@ -26,9 +26,9 @@ module.exports = {
             env: {
                 NODE_ENV: 'development'
             },
-            error_file: '/home/coder/data/logs/pm2/placeholder-error.log',
-            out_file: '/home/coder/data/logs/pm2/placeholder-out.log',
-            log_file: '/home/coder/data/logs/pm2/placeholder.log',
+            error_file: '/home/coder/logs/pm2/placeholder-error.log',
+            out_file: '/home/coder/logs/pm2/placeholder-out.log',
+            log_file: '/home/coder/logs/pm2/placeholder.log',
             time: true
         }
         // Note: Individual slot configurations are now managed dynamically by add-slot.js

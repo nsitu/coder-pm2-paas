@@ -197,52 +197,7 @@ resource "coder_script" "startup" {
   script             = replace(file("${path.module}/startup.sh"), "\r", "")
 }
 
-# Detached runtime services (non-blocking). These run concurrently on start and
-# each script is responsible for its own readiness gating.
-# Admin service starts PM2 ecosystem (admin server + placeholder server)
-resource "coder_script" "service_admin" {
-  agent_id           = coder_agent.main.id
-  display_name       = "Admin Service"
-  run_on_start       = true
-  start_blocks_login = false
-  script             = replace(file("${path.module}/admin.sh"), "\r", "")
-}
-
-# PM2 provides built-in process monitoring, so no separate monitor needed
-# resource "coder_script" "service_monitor" {
-#   agent_id           = coder_agent.main.id
-#   display_name       = "Process Monitor"
-#   run_on_start       = true
-#   start_blocks_login = false
-#   script             = replace(file("${path.module}/monitor.sh"), "\r", "")
-# }
-
-# resource "coder_script" "service_pgadmin" {
-#   agent_id           = coder_agent.main.id
-#   display_name       = "pgAdmin"
-#   run_on_start       = true
-#   start_blocks_login = false
-#   script             = replace(file("${path.module}/pgadmin.sh"), "\r", "")
-# }
  
-
-# resource "coder_script" "service_pgweb" {
-#   agent_id           = coder_agent.main.id
-#   display_name       = "PGWeb"
-#   run_on_start       = true
-#   start_blocks_login = false
-#   script             = replace(file("${path.module}/pgweb.sh"), "\r", "")
-# }
- 
-
-# The placeholder server is now managed by PM2 via the ecosystem configuration
-# resource "coder_script" "service_placeholders" {
-#   agent_id           = coder_agent.main.id
-#   display_name       = "Slot Placeholders"
-#   run_on_start       = true
-#   start_blocks_login = false
-#   script             = replace(file("${path.module}/placeholders.sh"), "\r", "")
-# }
 
 # NOTE coder modules are frequently updated. 
 # note that version  = "1.0.30" refers to the entire module repo rather than the specific module
@@ -256,10 +211,12 @@ resource "coder_script" "service_admin" {
 
 module "vscode-web" {
   source         = "registry.coder.com/modules/vscode-web/coder"
-  version        = "1.0.30"
+  version        = "1.4.1"
   agent_id       = coder_agent.main.id
   folder   = "/home/coder"
   extensions     = ["github.copilot", "dbcode.dbcode", "github.vscode-github-actions", "github.remotehub"]
+  disable_trust = true
+  telemetry_level = "off"
   settings = {
       "workbench.colorTheme": "Default Dark Modern",
       "workbench.colorCustomizations": {
@@ -281,8 +238,7 @@ module "vscode-web" {
           "**/*.vscode-server": true,
           "**/*.wget-hsts": true
       },
-      "workbench.startupEditor" : "readme",
-      "security.workspace.trust.enabled": false,
+      "workbench.startupEditor" : "none",
       "editor.defaultFormatter": "esbenp.prettier-vscode",
       "codetogether.userName": "${local.username}",
       "remote.portsAttributes": {
@@ -302,9 +258,32 @@ module "vscode-web" {
       "git.enableSmartCommit": true,
       "github.copilot.advanced": {},
       "workbench.welcomePage.walkthroughs.openOnInstall": false,
-      "workbench.startupEditor": "welcomePage",
       "accounts.sync": "on",
-      "settingsSync.keybindingsPerPlatform": false
+      "settingsSync.keybindingsPerPlatform": false,
+      "dbcode.autoDiscovery": true,
+      "dbcode.showDiscoveredConnectionsOnly": false,
+      "dbcode.defaultDatabase": "workspace_db",
+      "workbench.welcomePage.walkthroughs.openOnInstall": false,
+      "extensions.ignoreRecommendations": true,
+      "workbench.tips.enabled": false,
+      "update.showReleaseNotes": false,
+      "dbcode.connections": [
+        {
+          "connectionId": "workspace-postgres-main",
+          "name": "Workspace PostgreSQL",
+          "driver": "postgres",
+          "connectionType": "host",
+          "host": "localhost",
+          "port": 5432,
+          "ssl": false,
+          "username": "coder",
+          "password": "coder_dev_password",
+          "savePassword": "file",
+          "database": "workspace_db",
+          "readOnly": false,
+          "connectionTimeout": 30
+        }
+      ]
   } 
   accept_license = true
 }
@@ -324,36 +303,7 @@ resource "coder_app" "admin" {
     threshold = 5
   }
 }
-
-# resource "coder_app" "pgadmin" {
-#   agent_id     = coder_agent.main.id
-#   slug         = "pgadmin"
-#   display_name = "PGAdmin"
-#   url          = "http://localhost:5050"
-#   icon         = "/icon/database.svg"
-#   subdomain    = true
-#   share        = "owner"
-#   healthcheck {
-#     url       = "http://localhost:5050"
-#     interval  = 15
-#     threshold = 3
-#   }
-# }
-
-# resource "coder_app" "pgweb" {
-#   agent_id     = coder_agent.main.id
-#   slug         = "pgweb"
-#   display_name = "PGWeb"
-#   url          = "http://localhost:8081"
-#   icon         = "/icon/database.svg"
-#   subdomain    = true
-#   share        = "owner"
-#   healthcheck {
-#     url       = "http://localhost:8081"
-#     interval  = 15
-#     threshold = 3
-#   }
-# }
+  
 
 # Individual slot apps
 resource "coder_app" "slot_a" {

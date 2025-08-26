@@ -506,18 +506,7 @@ class AdminPanel {
                 <h3>Webhook URL</h3>
                 <p>Use this URL in your GitHub repository webhook settings:</p>
                 <code>https://admin--${window.location.hostname.split('--').slice(1).join('--')}/webhook</code>
-            </div>
-
-            <div class="settings-section mt-3">
-                <h3>Database</h3>
-                <p>PostgreSQL database is available at:</p>
-                <code>postgresql://coder:password@localhost:5432/workspace_db</code>
-                <div class="mt-2">
-                    <a href="https://pgadmin--${window.location.hostname.split('--').slice(1).join('--')}" target="_blank" class="btn btn-info">
-                        Open PGAdmin
-                    </a>
-                </div>
-            </div>
+            </div> 
         `;
     }
 

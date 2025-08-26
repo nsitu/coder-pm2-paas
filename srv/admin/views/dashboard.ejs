@@ -130,36 +130,16 @@
         .btn:hover {
             opacity: 0.9;
         }
-
-        .global-actions {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
+ 
     </style>
 </head>
 
 <body>
     <div class="header">
-        <h1>🚀 Deployment Admin Panel</h1>
-        <p>Manage your 5 application deployment slots</p>
+        <h1>Deployment Admin Panel</h1>
+        <p>Manage your application deployment slots</p>
     </div>
-
-    <div class="global-actions">
-        <h2>Global Actions</h2>
-        <div class="button-group">
-            <button
-                class="btn btn-success"
-                onclick="deployAll()"
-            >Deploy All Configured Slots</button>
-            <button
-                class="btn btn-warning"
-                onclick="restartAll()"
-            >Restart All Running Apps</button>
-        </div>
-    </div>
+ 
 
     <div class="slots-grid">
         <% Object.entries(slots).forEach(([slotId, slot]) => { %>

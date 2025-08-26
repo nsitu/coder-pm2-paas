@@ -57,9 +57,9 @@ try {
             autorestart: true,
             watch: false,
             max_restarts: 3,
-            error_file: `/home/coder/data/logs/pm2/slot-${slot}-error.log`,
-            out_file: `/home/coder/data/logs/pm2/slot-${slot}-out.log`,
-            log_file: `/home/coder/data/logs/pm2/slot-${slot}.log`,
+            error_file: `/home/coder/logs/pm2/slot-${slot}-error.log`,
+            out_file: `/home/coder/logs/pm2/slot-${slot}-out.log`,
+            log_file: `/home/coder/logs/pm2/slot-${slot}.log`,
             time: true
         };
         config.apps.push(slotApp);
