@@ -78,13 +78,10 @@ update_slot_status() {
     local message="${2:-}"
     
     if [ -f "$CONFIG_FILE" ]; then
-        local temp_file=$(mktemp)
-        if jq ".slots.$SLOT.status = \"$status\" | .slots.$SLOT.last_deploy = \"$(date -Iseconds)\"" "$CONFIG_FILE" > "$temp_file" 2>/dev/null; then
-            mv "$temp_file" "$CONFIG_FILE"
+        if node /home/coder/srv/scripts/update-slot.js --slot "$SLOT" --status "$status" --last-deploy now --config "$CONFIG_FILE" >/dev/null 2>&1; then
             log "Updated slot $SLOT status to: $status"
         else
             log_warning "Failed to update slot status in config file"
-            rm -f "$temp_file"
         fi
     fi
 }
@@ -272,57 +269,137 @@ main() {
     
     cd "$APP_DIR"
     
-    # Step 6: Install dependencies
-    if [ -f package.json ]; then
-        log "Installing dependencies..."
-        
-        # Clean install for better reliability
-        if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-            if npm ci --omit=dev --silent; then
-                log_success "Dependencies installed via npm ci"
-            else
-                log_warning "npm ci failed, falling back to npm install"
-                npm install --omit=dev --silent
-            fi
+    # Step 6: Detect site type and branch
+    local DETECT_OUTPUT
+    DETECT_OUTPUT=$(node /home/coder/srv/scripts/site-detect-cli.js "$APP_DIR" 2>/dev/null || echo '{}')
+    local SITE_TYPE
+    local OUT_DIR
+    local SPA
+    SITE_TYPE=$(echo "$DETECT_OUTPUT" | jq -r '.type // "nodejs"')
+    OUT_DIR=$(echo "$DETECT_OUTPUT" | jq -r '.outputDir // ""')
+    SPA=$(echo "$DETECT_OUTPUT" | jq -r '.spa // true')
+
+    log "Detected site type: $SITE_TYPE"
+
+    # Fallback: if no package.json but root index.html exists, deploy as static without build
+    if [ "$SITE_TYPE" != "static" ] && [ ! -f package.json ] && [ -f index.html ]; then
+        log "No package.json found but index.html present; treating as static site without build"
+        SITE_TYPE="static"
+        OUT_DIR="$APP_DIR"
+        # best-effort SPA detection: consider SPA unless 404.html exists
+        if [ -f "$APP_DIR/404.html" ]; then
+            SPA=false
         else
-            npm install --omit=dev --silent
-            log_success "Dependencies installed via npm install"
+            SPA=true
         fi
-        
-        # Run build script if it exists
-        if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
-            log "Building application..."
-            if npm run build --silent; then
-                log_success "Application built successfully"
+    fi
+
+    if [ "$SITE_TYPE" = "static" ]; then
+        # Static flow: install with dev deps, build if present
+        if [ -f package.json ]; then
+            log "Installing dependencies for static build..."
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+                npm ci --silent || npm install --silent
             else
-                log_error "Build failed"
+                npm install --silent
+            fi
+            if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
+                log "Building static site..."
+                npm run build --silent || { log_error "Build failed"; exit 1; }
+            fi
+        fi
+
+        # Determine output directory (post-build or fallback to repo root with index.html)
+        DETECT_OUTPUT=$(node /home/coder/srv/scripts/site-detect-cli.js "$APP_DIR" 2>/dev/null || echo '{}')
+        # Preserve OUT_DIR if already set to repo root by fallback; otherwise update from detection
+        if [ "$OUT_DIR" != "$APP_DIR" ]; then
+            OUT_DIR=$(echo "$DETECT_OUTPUT" | jq -r '.outputDir // ""')
+        fi
+        SPA=$(echo "$DETECT_OUTPUT" | jq -r '.spa // true')
+        if [ -z "$OUT_DIR" ] || [ ! -d "$OUT_DIR" ]; then
+            # If detection failed, but repo root has index.html, use repo root
+            if [ -f "$APP_DIR/index.html" ]; then
+                OUT_DIR="$APP_DIR"
+                SPA=$([ -f "$APP_DIR/404.html" ] && echo false || echo true)
+                log "Using repository root as static output directory"
+            else
+                log_error "Static output directory not found"
                 exit 1
             fi
         fi
+        if [ ! -f "$OUT_DIR/index.html" ]; then
+            log_error "index.html not found in static output directory"
+            exit 1
+        fi
+
+        # Sync to static_root atomically
+        local STATIC_ROOT="/home/coder/srv/static/$SLOT/current"
+        local STATIC_TMP="/home/coder/srv/static/$SLOT/.next-${RANDOM}"
+        mkdir -p "$STATIC_TMP" "$STATIC_ROOT"
+        rsync -a --delete "$OUT_DIR"/ "$STATIC_TMP"/
+        rm -rf "$STATIC_ROOT" && mv "$STATIC_TMP" "$STATIC_ROOT"
+
+        # Ensure PM2 app not holding port
+        if pm2 describe "slot-$SLOT" >/dev/null 2>&1; then
+            stop_slot_process "$SLOT" || true
+        fi
+
+        # Update slots.json via Node helper
+        if [ -f "$CONFIG_FILE" ]; then
+            if node /home/coder/srv/scripts/update-slot.js \
+                --slot "$SLOT" \
+                --status deployed \
+                --type static \
+                --static-root "$STATIC_ROOT" \
+                --spa-mode "$SPA" \
+                --last-deploy now \
+                --inc-deploy-count \
+                --config "$CONFIG_FILE" >/dev/null 2>&1; then
+                log "slots.json updated for static deployment"
+            else
+                log_warning "Failed to update slots.json"
+            fi
+        fi
+
+        # Health check via Slot Web Server
+        if health_check "$SLOT"; then
+            update_slot_status "deployed"
+            log_success "Static site deployed to $STATIC_ROOT and served on port $PORT"
+            return 0
+        else
+            update_slot_status "error"
+            log_error "Static site not healthy on port $PORT"
+            exit 1
+        fi
     else
-        log_warning "No package.json found, skipping dependency installation"
-    fi
-    
-    # Step 7: Detect start command
-    start_cmd=$(detect_start_command)
-    
-    # Step 8: Start application
-    if start_application "$start_cmd"; then
-        log_success "Application started"
-    else
-        exit 1
-    fi
-    
-    # Step 9: Health check
-    if health_check "$SLOT"; then
-        update_slot_status "deployed"
-        log_success "Deployment completed successfully!"
-        log_success "Application is running on port $PORT"
-        log_success "Logs: $DATA_DIR/logs/slot-$SLOT.log"
-    else
-        update_slot_status "error"
-        log_error "Deployment failed health check"
-        exit 1
+        # Node.js flow: production deps and PM2 start
+        if [ -f package.json ]; then
+            log "Installing production dependencies..."
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+                npm ci --omit=dev --silent || npm install --omit=dev --silent
+            else
+                npm install --omit=dev --silent
+            fi
+        fi
+
+        # Detect start command
+        start_cmd=$(detect_start_command)
+        # Start and health check
+        if start_application "$start_cmd"; then
+            log_success "Application started"
+        else
+            exit 1
+        fi
+        if health_check "$SLOT"; then
+            update_slot_status "deployed"
+            log_success "Deployment completed successfully!"
+            log_success "Application is running on port $PORT"
+            log_success "Logs: $DATA_DIR/logs/slot-$SLOT.log"
+        else
+            update_slot_status "error"
+            log_error "Deployment failed health check"
+            exit 1
+        fi
     fi
 }
 

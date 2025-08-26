@@ -17,8 +17,8 @@ module.exports = {
             time: true
         },
         {
-            name: 'placeholder-server',
-            script: '/home/coder/srv/placeholders/server.js',
+            name: 'slot-web-server',
+            script: '/home/coder/srv/server/server.js',
             instances: 1,
             autorestart: true,
             watch: false,
@@ -26,9 +26,9 @@ module.exports = {
             env: {
                 NODE_ENV: 'development'
             },
-            error_file: '/home/coder/logs/pm2/placeholder-error.log',
-            out_file: '/home/coder/logs/pm2/placeholder-out.log',
-            log_file: '/home/coder/logs/pm2/placeholder.log',
+            error_file: '/home/coder/logs/pm2/slot-web-server-error.log',
+            out_file: '/home/coder/logs/pm2/slot-web-server-out.log',
+            log_file: '/home/coder/logs/pm2/slot-web-server.log',
             time: true
         }
         // Note: Individual slot configurations are now managed dynamically by add-slot.js

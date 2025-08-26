@@ -27,7 +27,7 @@ RUN touch /var/mail/ubuntu && chown ubuntu /var/mail/ubuntu && userdel -r ubuntu
 # Add a user `coder` so that you're not developing as the `root` user
 RUN useradd coder \
     --create-home \
-    --shell=/bin/bash \ 
+    --shell=/bin/bash \
     --uid=1000 \
     --user-group && \
     echo "coder ALL=(ALL) NOPASSWD:ALL" >>/etc/sudoers.d/nopasswd
@@ -38,7 +38,7 @@ RUN add-apt-repository ppa:git-core/ppa && \
 
 # Add repository for PostgreSQL 
 # Prevent creation of default postgres cluster (e.g. "17/main") so coder can manage it
-RUN apt-get install -y postgresql-common && \ 
+RUN apt-get install -y postgresql-common && \
     printf 'create_main_cluster = false\n' | tee /etc/postgresql-common/createcluster.conf >/dev/null && \
     /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && \
     apt-get update
@@ -52,7 +52,7 @@ RUN apt-get upgrade --yes --no-install-recommends --no-install-suggests && \
     git \
     htop \
     iproute2 \
-    jq \ 
+    jq \
     lsof \
     man \
     net-tools \
@@ -64,7 +64,7 @@ RUN apt-get upgrade --yes --no-install-recommends --no-install-suggests && \
     python3 \
     python3-pip \
     python3-venv \
-    rsync \ 
+    rsync \
     tzdata \
     unzip \
     util-linux \
@@ -124,9 +124,9 @@ COPY --chown=coder:coder ecosystem.config.js /opt/bootstrap/ecosystem.config.js
 
 USER coder
 
-# Pre-install Node dependencies for admin and placeholders
+# Pre-install Node dependencies for admin, placeholders, and slot web server
 RUN set -eux; \
     cd /opt/bootstrap/srv/admin && npm install --omit=dev; \
-    cd /opt/bootstrap/srv/placeholders && npm install --omit=dev
+    cd /opt/bootstrap/srv/server && npm install --omit=dev
 
 

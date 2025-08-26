@@ -1,14 +1,15 @@
 {
-    "name": "placeholders",
+    "name": "slot-web-server",
     "version": "1.0.0",
     "private": true,
     "type": "commonjs",
-    "description": "Dynamic placeholder server for deployment slots",
+    "description": "Slot Web Server serving placeholders and static sites per slot port",
     "main": "server.js",
     "scripts": {
         "start": "node server.js"
     },
     "dependencies": {
+        "compression": "^1.7.4",
         "express": "^4.19.2"
     }
 }

@@ -16,16 +16,15 @@ function getScriptPath(scriptName) {
     return path.join(__dirname, '..', 'scripts', scriptName);
 }
 
-// Helper function to restart placeholder server
+// Helper function to restart Slot Web Server
 function restartPlaceholderServer() {
     return new Promise((resolve, reject) => {
-        // With PM2 individual placeholders, we just ensure all slot placeholders are running
-        exec('pm2 restart slot-a slot-b slot-c slot-d slot-e', (error, stdout, stderr) => {
+        exec('pm2 restart slot-web-server', (error, stdout, stderr) => {
             if (error) {
-                console.error('Failed to restart placeholder slots:', error.message);
+                console.error('Failed to restart Slot Web Server:', error.message);
                 reject(error);
             } else {
-                console.log('All placeholder slots restarted successfully');
+                console.log('Slot Web Server restarted successfully');
                 resolve(stdout);
             }
         });
@@ -236,30 +235,29 @@ app.post('/api/deploy/:slot', (req, res) => {
     });
 
     child.on('close', (code) => {
-        if (code === 0) {
-            // Update status
-            config.slots[slotId].status = 'deployed';
-            config.slots[slotId].last_deploy = new Date().toISOString();
-            config.slots[slotId].deploy_count = (config.slots[slotId].deploy_count || 0) + 1;
-            saveConfig(config);
+        // Always reload fresh config to reflect deploy script updates (static_root, type, spa_mode, etc.)
+        const freshConfig = loadConfig();
+        const freshSlot = freshConfig.slots[slotId] || {};
 
+        if (code === 0) {
+            // Do NOT overwrite slots.json here; deploy script already updated it atomically
             res.json({
                 success: true,
                 message: `Deployment successful for slot ${slotId}`,
                 output: output,
                 deployment_info: {
                     slot: slotId,
-                    repository: slot.repository,
-                    branch: slot.branch,
-                    port: slot.port,
-                    deployed_at: config.slots[slotId].last_deploy
+                    repository: freshSlot.repository || slot.repository,
+                    branch: freshSlot.branch || slot.branch,
+                    port: freshSlot.port || slot.port,
+                    type: freshSlot.type || null,
+                    static_root: freshSlot.static_root || null,
+                    spa_mode: typeof freshSlot.spa_mode === 'boolean' ? freshSlot.spa_mode : undefined,
+                    deployed_at: freshSlot.last_deploy || new Date().toISOString()
                 }
             });
         } else {
-            // Update status to error
-            config.slots[slotId].status = 'error';
-            saveConfig(config);
-
+            // The deploy script's cleanup updates status=error; avoid overwriting
             res.status(500).json({
                 error: `Deployment failed for slot ${slotId}`,
                 output: output,
@@ -437,8 +435,8 @@ app.get('/api/processes/:slot', (req, res) => {
             const config = loadConfig();
             const slotConfig = config.slots?.[slotId] || {};
 
-            // Determine if this is a deployed app or placeholder
-            const isPlaceholder = processInfo.pm2_env?.cwd?.includes('/placeholders');
+            // Determine if this is a deployed app or served by Slot Web Server
+            const isPlaceholder = processInfo.name === 'slot-web-server' || processInfo.pm2_env?.cwd?.includes('/srv/server');
 
             res.json({
                 pm2: {
@@ -509,8 +507,8 @@ app.get('/api/processes/:slot/status', (req, res) => {
             const config = loadConfig();
             const slotConfig = config.slots?.[slotId] || {};
 
-            // Determine if this is a deployed app or placeholder
-            const isPlaceholder = processInfo.pm2_env?.cwd?.includes('/placeholders');
+            // Determine if this is a deployed app or served by Slot Web Server
+            const isPlaceholder = processInfo.name === 'slot-web-server' || processInfo.pm2_env?.cwd?.includes('/srv/server');
 
             res.json({
                 pm2: {

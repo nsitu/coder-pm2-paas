@@ -35,13 +35,13 @@ start_pm2_app() {
     log_with_timestamp "Deploying slot $slot with PM2..."
     
     # Step 1: Stop placeholder server (will restart with updated config after deployment)
-    log_with_timestamp "Stopping multi-port placeholder server..."
+    log_with_timestamp "Stopping Slot Web Server..."
     if [ -d "/home/coder/srv" ]; then
         # Running in Coder workspace - use PM2 directly
-        pm2 stop placeholder-server >/dev/null 2>&1 || log_warning "Placeholder server was not running"
+    pm2 stop slot-web-server >/dev/null 2>&1 || log_warning "Slot Web Server was not running"
     else
         # Running locally - use PM2 directly
-        pm2 stop placeholder-server >/dev/null 2>&1 || log_warning "Placeholder server was not running"
+    pm2 stop slot-web-server >/dev/null 2>&1 || log_warning "Slot Web Server was not running"
     fi
     
     # Use static Node.js script to add slot to ecosystem configuration
@@ -74,13 +74,13 @@ start_pm2_app() {
         # Save PM2 configuration for persistence
         if pm2 save; then
             # Step 2: Restart placeholder server (will automatically detect the deployed slot and not create placeholder for it)
-            log_with_timestamp "Restarting multi-port placeholder server..."
+            log_with_timestamp "Restarting Slot Web Server..."
             if [ -d "/home/coder/srv" ]; then
                 # Running in Coder workspace - use PM2 directly
-                pm2 restart placeholder-server >/dev/null 2>&1 || pm2 start ecosystem.config.js --only placeholder-server
+                pm2 restart slot-web-server >/dev/null 2>&1 || pm2 start ecosystem.config.js --only slot-web-server
             else
                 # Running locally - use PM2 directly
-                pm2 restart placeholder-server >/dev/null 2>&1 || pm2 start ecosystem.config.js --only placeholder-server
+                pm2 restart slot-web-server >/dev/null 2>&1 || pm2 start ecosystem.config.js --only slot-web-server
             fi
             
             log_success "Slot $slot deployed successfully with PM2"
@@ -169,20 +169,17 @@ stop_slot() {
     # Step 4: Update slot status to empty in config
     local config_file="/home/coder/srv/admin/config/slots.json"
     if [ -f "$config_file" ]; then
-        local temp_file=$(mktemp)
-        if jq ".slots.$slot.status = \"empty\"" "$config_file" > "$temp_file" 2>/dev/null; then
-            mv "$temp_file" "$config_file"
+        if node /home/coder/srv/scripts/update-slot.js --slot "$slot" --status empty --last-deploy now --config "$config_file" >/dev/null 2>&1; then
             log_with_timestamp "Updated slot $slot status to empty"
         else
             log_warning "Failed to update slot status in config file"
-            rm -f "$temp_file"
         fi
     fi
     
     # Step 5: Save PM2 configuration
     pm2 save || log_warning "Failed to save PM2 configuration"
     
-    # Step 6: The multi-port placeholder server will automatically detect the empty slot
+    # Step 6: The Slot Web Server will automatically detect the empty slot
     # and start serving a placeholder on that port via file watching
     log_success "Slot $slot restored to placeholder via multi-port server"
     return 0
